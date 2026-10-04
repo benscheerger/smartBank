@@ -147,6 +147,12 @@ def check_validation(
     ]["currency"]["type"] = "integer"
     require_rejected(changed_output, "changed-output-schema")
 
+    boolean_minimum = deepcopy(sample)
+    boolean_minimum["output_schema"]["$defs"][
+        "ReplayBusinessOutcome"
+    ]["properties"]["step"]["minimum"] = True
+    require_rejected(boolean_minimum, "boolean-version-1.3-minimum")
+
     unsupported = deepcopy(sample)
     unsupported["schema_version"] = "99.0"
     require_rejected(unsupported, "unsupported-version")
@@ -194,6 +200,12 @@ def check_v12_input_contract_is_frozen() -> None:
         "pattern"
     ] = ".*"
     require_rejected(changed, "changed-version-1.2-input-schema")
+
+    boolean_minimum = deepcopy(artifact)
+    boolean_minimum["output_schema"]["$defs"][
+        "ReplayBusinessOutcome"
+    ]["properties"]["step"]["minimum"] = True
+    require_rejected(boolean_minimum, "boolean-version-1.2-minimum")
 
     if path.read_bytes() != original:
         raise AssertionError("Version 1.2 validation modified its artifact.")

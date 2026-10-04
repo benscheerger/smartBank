@@ -1,3 +1,4 @@
+import json
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, TypeAdapter, model_validator
@@ -9,6 +10,16 @@ from automation.verification import BalanceResult
 
 CAPABILITY_SCHEMA_VERSION: Literal["1.3"] = "1.3"
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
+
+
+def _schemas_equal(
+    saved: dict[str, Any],
+    expected: dict[str, Any],
+) -> bool:
+    return json.dumps(saved, sort_keys=True) == json.dumps(
+        expected,
+        sort_keys=True,
+    )
 
 
 class MemberLookupInputs(StrictModel):
@@ -202,12 +213,12 @@ class _CapabilityV12(StrictModel):
 
     @model_validator(mode="after")
     def validate_contract_schemas(self) -> Self:
-        if self.input_schema != _build_input_schema_v12():
+        if not _schemas_equal(self.input_schema, _build_input_schema_v12()):
             raise ValueError(
                 "input_schema does not match the version 1.2 contract."
             )
 
-        if self.output_schema != _build_output_schema_v12():
+        if not _schemas_equal(self.output_schema, _build_output_schema_v12()):
             raise ValueError(
                 "output_schema does not match the version 1.2 contract."
             )
@@ -232,12 +243,12 @@ class Capability(StrictModel):
 
     @model_validator(mode="after")
     def validate_contract_schemas(self) -> Self:
-        if self.input_schema != build_input_schema():
+        if not _schemas_equal(self.input_schema, build_input_schema()):
             raise ValueError(
                 "input_schema does not match the supported contract."
             )
 
-        if self.output_schema != build_output_schema():
+        if not _schemas_equal(self.output_schema, build_output_schema()):
             raise ValueError(
                 "output_schema does not match the supported contract."
             )
