@@ -6,17 +6,17 @@ Some business applications have no integration API, so automation must use their
 
 The implemented task retrieves a member’s available savings balance and currency from a local banking demo using synthetic records. Discovery produces a validated JSON capability containing reusable actions, input and output schemas, input references, and checkpoints. Replay follows those actions with another member ID and checks the displayed result.
 
-An operator console provides discovery, replay, dataset selection, results, and run history. When a persistent service notice blocks the supported replay workflow, a human can repair the same browser session and request Resume.
+An operator console provides discovery, replay, dataset selection, results, and run history. When enabled, a human can repair a supported service notice in the same browser session and request Resume.
 
 ## Features and scope
 
-- **Discovery:** Accepts a natural-language goal, an allowlisted target URL, and a member ID. The model reads the page and proposes actions within an eight-decision limit.
+- **Discovery:** Accepts a natural-language goal, an allowlisted target URL, and a member ID. The model reads the page and proposes actions within an eight-decision window, with one bounded handoff and one additional window when enabled.
 - **Reusable capabilities:** Saves verified workflows as versioned JSON files with self-contained input and output contracts.
 - **Replay:** Runs saved workflows with new inputs without model calls.
-- **Clear outcomes:** Separates success, missing-member results, and handled execution failures.
-- **Recovery and takeover:** Attempts one automatic notice dismissal, then allows human repair when enabled.
+- **Clear outcomes:** Separates success, missing-member results, and handled execution failures while reporting recovery events to the caller.
+- **Recovery and takeover:** Attempts one automatic notice dismissal, then allows bounded human repair during replay or discovery when enabled.
 - **Operator console:** Provides one interface for running tasks and inspecting evidence.
-- **Policy and evidence:** Checks permitted actions and requests, records action purposes, and attempts structural failure capture.
+- **Policy and evidence:** Checks permitted actions and requests, blocks WebSockets, records action purposes and model-call metadata, and attempts structural failure capture.
 
 Natural-language goals are limited to the implemented savings-balance task. Alternate datasets demonstrate reuse across records in the same UI. Desktop applications, other banking tasks, and real banking integrations are not implemented.
 
@@ -90,8 +90,9 @@ The launcher prints the console URL and attempts to open it in your browser. If 
 2. Choose the `members` dataset.
 3. Enter member ID `DEMO-101`.
 4. Confirm the local smartBank demo target.
-5. Enter this goal: “Find this member’s available savings balance and report its currency.”
-6. Start the run.
+5. Choose whether to allow human takeover.
+6. Enter this goal: “Find this member’s available savings balance and report its currency.”
+7. Start the run.
 
 A visible Chromium browser opens. After UI verification succeeds, the console displays the model summary, verified output, run ID, and capability ID.
 
@@ -103,7 +104,7 @@ evidence/capabilities/get_savings_balance_<run-id>.json
 
 It also updates `get_savings_balance.json`, the convenience alias for the latest successful recording.
 
-New recordings use capability schema `1.2`. Their embedded input and output JSON Schemas are generated from the runtime Pydantic models and validated when loaded. Existing `1.1` artifacts remain supported through an in-memory compatibility upgrade; loading them does not modify their files.
+New recordings use capability schema `1.3`. Their embedded input and output JSON Schemas are generated from the runtime Pydantic models and validated when loaded. Existing `1.1` and `1.2` artifacts remain supported through an in-memory compatibility upgrade; version `1.2` contracts are validated against their frozen schemas, and loading archived artifacts does not modify their files.
 
 ### Replay with another member
 
@@ -160,9 +161,11 @@ During takeover, the demo shows the manual resolution control in place of the au
 
 Resume checks the original single-tab session, policy, requested member-details page, absence of the notice, and one actionable pending link. A repairable checkpoint failure leaves replay paused. Policy violations or loss of the required session end the run.
 
-One takeover is allowed per run, with a default timeout of 180 seconds. Cancellation or expiry returns a structured failure.
+One takeover is allowed per run, with a default timeout of 180 seconds. Cancellation or expiry returns a structured failure with a specific code and recovery event.
 
-The evidence records control transfers and up to 100 categorized manual actions without entered values. General escalation during discovery and recovery from other failure types are not implemented.
+Discovery can also request one handoff when its initial eight-step budget is exhausted or an actionable target times out. Resume requires the original URL, unchanged member input, one open page, no blocked traffic, and no workflow-advancing manual action. Only the known notice controls may be used. A validated Resume grants one additional eight-step window with continuous step numbering; human actions are not saved in the capability. Policy violations, model failures, malformed actions, lost sessions, a second blockage, cancellation, timeout, or an invalid Resume stop discovery.
+
+The evidence records control transfers and up to 100 categorized manual actions without entered values. Recovery from other failure types is not implemented.
 
 ## Results and evidence
 
@@ -170,11 +173,13 @@ Known replay outcomes use these result types:
 
 | Status | Meaning |
 | --- | --- |
-| `success` | UI verification passed. Output contains member ID, account type, available balance, and currency. |
-| `business_outcome` | The supported missing-member outcome was detected: `member_not_found`. |
-| `failure` | Replay stopped with a code, step when available, expected condition, safe observations, and error type. |
+| `success` | UI verification passed. The result contains verified member, account, balance, and currency outputs plus a recovery-event list. |
+| `business_outcome` | The supported missing-member outcome was detected: `member_not_found`, with any recovery events. |
+| `failure` | Replay stopped with a code, step when available, expected condition, safe observations, error type, and recovery events. |
 
-Outputs come from the displayed UI, separately from the model summary. Unexpected exceptions can propagate from job functions; the console catches them and marks the run as failed.
+Clean runs return an empty `recovery_events` list. Notice handling records automatic recovery, human recovery, exhaustion, cancellation, or timeout. Terminal codes distinguish `recovery_exhausted`, `human_takeover_cancelled`, and `human_takeover_timed_out` from other hard failures.
+
+Outputs come from the displayed UI, separately from the model summary. Setup and other unexpected exceptions can propagate from job functions; the console catches them and marks the run as failed.
 
 ### Saved evidence
 
@@ -182,30 +187,33 @@ Outputs come from the displayed UI, separately from the model summary. Unexpecte
 | --- | --- |
 | `evidence/capabilities/*.json` | Versioned workflows with reusable input/output contracts, recorded controls, and checkpoints. |
 | `evidence/runs/*.jsonl` | Discovery and replay events, including the target URL, verification, recovery, and handoff. |
-| `evidence/runs/*.failure.json` | Failure details and structural capture, or a marker that the snapshot was unavailable. |
+| `evidence/runs/*.failure.json` | Replay or discovery failure details and structural capture, or a marker that the snapshot was unavailable. |
 
-New run logs use evidence schema `1.1` and record the allowlisted target URL. Existing `1.0` logs remain supported and are not rewritten.
+New run logs use evidence schema `1.2` and record the allowlisted target URL. Discovery action proposals include the provider, returned model name, response ID, and nullable input, output, and total token counts. Existing `1.0` and `1.1` logs remain supported and are not rewritten.
 
 Action-step events now include fixed purposes such as `enter_member_id` and `open_savings_account`. Verification, recovery, and selected handoff events also include purposes. These describe application-defined intent without storing model-generated reasoning. Older logs may have no purpose field.
 
-Saved JSONL events omit raw page observations and model conversations. Failure capture saves up to 200 DOM nodes with structural information and known-control counts, excluding page text, field values, and raw attributes. If the file cannot be written, replay records that failure evidence is unavailable.
+Saved JSONL events omit prompts, raw page observations, model response content, summaries, and entered values. When a browser page is available, failure capture uses schema `1.1` and saves up to 200 DOM nodes with structural information and known-control counts, excluding page text, field values, and raw attributes. Archived `1.0` captures remain readable. If a capture cannot be written, the run records that failure evidence is unavailable.
 
 Terminal output includes proposed actions and the model summary.
 
 ### Evidence examples
 
-The following runs demonstrate discovery for `DEMO-101`, replay for `DEMO-202`, and persistent-notice recovery through scripted human takeover:
+The following fresh canonical set demonstrates discovery for `DEMO-101` and replay outcomes for new inputs and injected notice conditions:
 
-- [Saved capability](evidence/capabilities/get_savings_balance_5d9f29de-7bbe-4da0-8f6c-1687f5ee046f.json)
-- [Live discovery](evidence/runs/5d9f29de-7bbe-4da0-8f6c-1687f5ee046f.jsonl)
-- [Successful replay with another member](evidence/runs/853007f3-4aef-466e-9a21-dbb23f6ed971.jsonl)
-- [Rejected Resume, manual repair, and successful continuation](evidence/runs/8c016e6d-02cc-4e83-a146-60ef78038996.jsonl)
+- [Saved capability](evidence/capabilities/get_savings_balance_a38e407f-9c75-4cd0-9a78-868e7e474803.json)
+- [Genuine model-driven discovery](evidence/runs/a38e407f-9c75-4cd0-9a78-868e7e474803.jsonl)
+- [Clean replay with another member](evidence/runs/161cb2b8-a7ec-4376-bf75-5965e10f21a5.jsonl)
+- [Successful automatic notice recovery](evidence/runs/1292ed0d-2ca9-4a78-ab58-d5f5ca83a24d.jsonl)
+- [Rejected Resume, manual repair, and successful continuation](evidence/runs/6753ef5d-e557-4308-b4ea-4953ca1acc65.jsonl)
+- [Missing-member business outcome](evidence/runs/e902227f-d552-4b3a-b50a-fd1913148815.jsonl)
+- [Persistent-notice hard failure](evidence/runs/7782e4bf-8ff8-4012-b693-a31ee1bcb800.jsonl) and its [structural failure capture](evidence/runs/7782e4bf-8ff8-4012-b693-a31ee1bcb800.failure.json)
 
-The workflow checks passed for verified outputs, capability provenance, event order, and saved purpose labels. Both replay logs reference the discovery run through `source_run_id`.
+The workflow checks passed for verified outputs, capability provenance, event order, recovery events, and saved purpose labels. Every replay in this set references the discovery run through `source_run_id`.
 
-The default test suite also passed all six modules: capability contracts, policy, failure-evidence privacy, browser interaction and verification, business outcomes, and workflows.
+The default test suite also passed all seven modules: capability contracts, policy, failure-evidence privacy, browser interaction and verification, business outcomes, workflows, and end-to-end error contracts.
 
-An [earlier missing-member replay](evidence/runs/811880ba-2afa-465b-8f87-c2a25da02b76.jsonl) demonstrates the `member_not_found` business outcome. That run predates purpose logging.
+Older artifacts and logs remain in place for compatibility checks and historical evidence.
 
 ## Project structure
 
@@ -227,7 +235,7 @@ An [earlier missing-member replay](evidence/runs/811880ba-2afa-465b-8f87-c2a25da
 | `automation/business_outcomes.py` | Detects the missing-member outcome. |
 | `automation/recovery.py` | Attempts dismissal of the known service notice. |
 | `automation/policy.py` | Loads policy and checks URLs, methods, and actions. |
-| `automation/network.py` | Checks intercepted browser requests and blocks disallowed requests and redirects. |
+| `automation/network.py` | Checks intercepted browser requests, blocks disallowed requests and redirects, and closes every WebSocket before connection. |
 | `automation/handoff.py` | Pauses for human repair, records manual actions, and validates Resume. |
 | `automation/takeover_controls.py` | Provides queued Resume and Cancel controls for console and CLI takeover. |
 | `automation/evidence.py` | Writes event logs and attempts structural failure capture. |
@@ -299,7 +307,7 @@ python -m tests.test_workflows --live-discovery
 To replay a specific archived capability, use its filename without `.json`:
 
 ```bash
-python -m tests.test_workflows --capability-id get_savings_balance_5d9f29de-7bbe-4da0-8f6c-1687f5ee046f
+python -m tests.test_workflows --capability-id get_savings_balance_a38e407f-9c75-4cd0-9a78-868e7e474803
 ```
 
 ### Automated checks
@@ -312,8 +320,9 @@ python -m tests.test_workflows --capability-id get_savings_balance_5d9f29de-7bbe
 | `tests/test_browser.py` | Browser actions, result verification, rejection of the wrong member, and request blocking. |
 | `tests/test_business_outcomes.py` | Existing-member and missing-member detection. |
 | `tests/test_workflows.py` | Optional live discovery, replay, provenance, event order, saved purposes, older-event compatibility, and validated takeover. |
+| `tests/test_error_contracts.py` | End-to-end replay outcomes, recovery events, discovery escalation, structural failure capture, model metadata, and WebSocket blocking. |
 
-The takeover test uses scripted operator controls to request Resume before repair, click the real manual-resolution button, and request Resume again. It exercises handoff validation and manual-action recording, but does not test the console UI.
+The takeover tests use scripted operator controls to request Resume before repair, click the real manual-resolution button, and request Resume again. They also cover cancellation, timeout, rejected discovery Resume, and bounded discovery continuation. They exercise production handoff validation and manual-action recording, but do not drive the console through a browser.
 
 ### Manual checks
 
@@ -333,7 +342,7 @@ Saved evidence was inspected alongside the console results. Earlier manual check
 
 - **One task:** Goals are limited to the savings-balance lookup.
 - **One application:** Other web interfaces, desktop apps, and real banking systems are not supported.
-- **Limited recovery:** Automatic repair and human takeover cover the demonstrated service-notice condition.
+- **Limited recovery:** Automatic repair and human takeover cover the demonstrated service-notice condition; discovery handoff is limited to one additional eight-step window.
 - **Local operation:** One active job is supported. There are no user accounts, remote co-browsing, or job recovery after a restart.
 - **Safety limits:** Policy checks and intercepted-request restrictions are not an operating-system sandbox. Discovery sends synthetic page observations to the model.
 

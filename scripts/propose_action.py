@@ -43,14 +43,15 @@ def main():
                 if blocked_requests:
                     raise PolicyViolation(blocked_requests[-1])
 
-                proposed_action = propose_action(
+                proposal = propose_action(
                     client=client,
                     goal=goal,
                     observation=observation,
                 )
 
                 print(f"Model: {MODEL}")
-                print(proposed_action.model_dump_json(indent=2))
+                print(proposal.request.model_dump_json(indent=2))
+                print(proposal.metadata.model_dump_json(indent=2))
                 print("Proposal only; no action was executed.")
 
             finally:

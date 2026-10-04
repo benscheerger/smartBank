@@ -17,6 +17,7 @@ def main() -> None:
         ),
         target_url=DemoServer.url,
         inputs=MemberLookupInputs(member_id="DEMO-101"),
+        allow_human_takeover=True,
     )
 
     discovery = discover_capability(

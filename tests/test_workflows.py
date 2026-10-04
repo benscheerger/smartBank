@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Any
 from unittest.mock import patch
 from automation.evidence import EvidenceEvent
+from automation.evidence import InterventionReason
 
 from playwright.sync_api import Page
 
@@ -11,6 +12,7 @@ from automation.capability import MemberLookupInputs
 from automation.takeover_controls import (
     ConsoleTakeover,
     TakeoverCommand,
+    TakeoverMode,
 )
 from automation.handoff import HumanTakeover
 from automation.jobs import (
@@ -37,6 +39,9 @@ class ScriptedOperator(ConsoleTakeover):
         member_id: str,
         step: int,
         timeout_seconds: float,
+        mode: TakeoverMode,
+        task: str,
+        reason: InterventionReason,
     ):
         super().__init__(
             run_id=run_id,
@@ -44,6 +49,9 @@ class ScriptedOperator(ConsoleTakeover):
             step=step,
             timeout_seconds=timeout_seconds,
             url="Scripted operator test",
+            mode=mode,
+            task=task,
+            reason=reason,
         )
 
         self._page = page
@@ -107,6 +115,9 @@ class ScriptedHumanTakeover(HumanTakeover):
         member_id: str,
         step: int,
         timeout_seconds: float,
+        mode: TakeoverMode,
+        task: str,
+        reason: InterventionReason,
     ) -> ScriptedOperator:
         return ScriptedOperator(
             page=self.page,
@@ -114,6 +125,9 @@ class ScriptedHumanTakeover(HumanTakeover):
             member_id=member_id,
             step=step,
             timeout_seconds=timeout_seconds,
+            mode=mode,
+            task=task,
+            reason=reason,
         )
 
 
@@ -377,6 +391,7 @@ def main() -> None:
                 ),
                 target_url=DemoServer.url,
                 inputs=MemberLookupInputs(member_id="DEMO-101"),
+                allow_human_takeover=True,
             ),
             dataset_id=args.dataset,
         )
@@ -463,6 +478,9 @@ def main() -> None:
             "Normal replay unexpectedly required takeover."
         )
 
+    if normal_replay.replay_result.recovery_events:
+        raise AssertionError("Clean replay reported a recovery event.")
+
     print(f"\nPASS: normal replay — {normal_replay.run_id}")
 
     # Replace only the operator-control implementation.
@@ -484,6 +502,14 @@ def main() -> None:
         member_id=inputs.member_id,
         source_run_id=capability.source_run_id,
     )
+
+    if [
+        event.outcome
+        for event in takeover_replay.replay_result.recovery_events
+    ] != ["exhausted", "recovered_by_human"]:
+        raise AssertionError(
+            "Takeover replay did not expose its recovery sequence."
+        )
 
     for event_name, purpose in (
         ("recovery_started", "dismiss_blocking_notice"),

@@ -5,6 +5,9 @@ from typing import Any, Literal
 
 from dotenv import load_dotenv
 from openai import OpenAI
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 from pydantic import Field, field_validator
 
@@ -16,15 +19,32 @@ from automation.capability import (
     build_output_schema,
     parse_capability_artifact,
 )
-from automation.discovery import run_discovery
-from automation.evidence import RunLog
+from automation.discovery import (
+    DiscoveryStepLimitReached,
+    DiscoveryTargetTimeout,
+    run_discovery,
+)
+from automation.evidence import (
+    DiscoveryFailure,
+    RunLog,
+    save_failure_evidence,
+)
+from automation.handoff import (
+    HumanTakeoverCancelled,
+    HumanTakeoverTimedOut,
+)
 from automation.handoff import TakeoverPanelFactory
 from automation.network import install_request_guard
 from automation.planner import MODEL
 from automation.policy import PolicyViolation, check_url
-from automation.replay import run_replay
+from automation.recording import RecordingError
+from automation.replay import describe_observed_state, run_replay
 from automation.results import ReplayResult
-from automation.verification import BalanceResult, verify_balance
+from automation.verification import (
+    BalanceResult,
+    VerificationError,
+    verify_balance,
+)
 from demo_app.server import DemoServer, DemoTargetUrl
 
 
@@ -38,6 +58,7 @@ class DiscoveryTask(StrictModel):
     goal: str = Field(min_length=1, max_length=1000)
     target_url: DemoTargetUrl
     inputs: MemberLookupInputs
+    allow_human_takeover: bool = False
 
     @field_validator("goal")
     @classmethod
@@ -121,6 +142,7 @@ def discover_capability(
     *,
     dataset_id: str,
     on_run_started: Callable[[str], None] | None = None,
+    panel_factory: TakeoverPanelFactory | None = None,
 ) -> DiscoveryJobResult:
     key_file = (
         Path.home()
@@ -177,101 +199,207 @@ def discover_capability(
                         page = context.new_page()
                         page.set_default_timeout(5000)
 
-                        check_url(task.target_url)
-                        page.goto(task.target_url)
+                        try:
+                            check_url(task.target_url)
+                            page.goto(task.target_url)
 
-                        discovery = run_discovery(
-                            client=client,
-                            page=page,
-                            goal=goal,
-                            inputs=inputs,
-                            blocked_requests=blocked_requests,
-                            log=log,
-                            max_steps=8,
-                        )
+                            discovery = run_discovery(
+                                client=client,
+                                page=page,
+                                goal=goal,
+                                inputs=inputs,
+                                blocked_requests=blocked_requests,
+                                log=log,
+                                max_steps=8,
+                                allow_human_takeover=(
+                                    task.allow_human_takeover
+                                ),
+                                panel_factory=panel_factory,
+                            )
 
-                        log.emit(
-                            "verification_started",
-                            purpose="verify_account_result",
-                        )
+                            log.emit(
+                                "verification_started",
+                                purpose="verify_account_result",
+                            )
 
-                        result = verify_balance(
-                            page=page,
-                            expected_member_id=inputs.member_id,
-                            expected_account_type=account_type,
-                        )
+                            result = verify_balance(
+                                page=page,
+                                expected_member_id=inputs.member_id,
+                                expected_account_type=account_type,
+                            )
 
-                        if blocked_requests:
-                            raise PolicyViolation(blocked_requests[-1])
+                            if blocked_requests:
+                                raise PolicyViolation(
+                                    blocked_requests[-1]
+                                )
 
-                        log.emit(
-                            "verification_passed",
-                            purpose="verify_account_result",
-                        )
+                            log.emit(
+                                "verification_passed",
+                                purpose="verify_account_result",
+                            )
 
-                        capability = Capability(
-                            source_run_id=discovery.run_id,
-                            input_schema=build_input_schema(),
-                            output_schema=build_output_schema(),
-                            steps=discovery.steps,
-                        )
+                            capability = Capability(
+                                source_run_id=discovery.run_id,
+                                input_schema=build_input_schema(),
+                                output_schema=build_output_schema(),
+                                steps=discovery.steps,
+                            )
 
-                        capability_directory = (
-                            PROJECT_ROOT
-                            / "evidence"
-                            / "capabilities"
-                        )
-                        capability_directory.mkdir(
-                            parents=True,
-                            exist_ok=True,
-                        )
+                            capability_directory = (
+                                PROJECT_ROOT
+                                / "evidence"
+                                / "capabilities"
+                            )
+                            capability_directory.mkdir(
+                                parents=True,
+                                exist_ok=True,
+                            )
 
-                        capability_id = (
-                            f"get_savings_balance_{log.run_id}"
-                        )
+                            capability_id = (
+                                f"get_savings_balance_{log.run_id}"
+                            )
 
-                        serialized = (
-                            capability.model_dump_json(indent=2)
-                            + "\n"
-                        )
+                            serialized = (
+                                capability.model_dump_json(indent=2)
+                                + "\n"
+                            )
 
-                        # Preserve the artifact belonging to this run.
-                        artifact_path = (
-                            capability_directory
-                            / f"{capability_id}.json"
-                        )
+                            # Preserve the artifact belonging to this run.
+                            artifact_path = (
+                                capability_directory
+                                / f"{capability_id}.json"
+                            )
 
-                        with artifact_path.open(
-                            "x",
-                            encoding="utf-8",
-                        ) as file:
-                            file.write(serialized)
+                            with artifact_path.open(
+                                "x",
+                                encoding="utf-8",
+                            ) as file:
+                                file.write(serialized)
 
-                        # Preserve the existing replay default.
-                        latest_path = (
-                            capability_directory
-                            / "get_savings_balance.json"
-                        )
-                        latest_path.write_text(
-                            serialized,
-                            encoding="utf-8",
-                        )
+                            # Update the replay default only after the
+                            # run-specific artifact is safely persisted.
+                            latest_path = (
+                                capability_directory
+                                / "get_savings_balance.json"
+                            )
+                            latest_path.write_text(
+                                serialized,
+                                encoding="utf-8",
+                            )
 
-                        log.emit("capability_saved")
+                            log.emit("capability_saved")
 
-                        print("\nModel summary:")
-                        print(discovery.finish.summary)
-                        print(f"\nSaved capability: {artifact_path}")
+                            print("\nModel summary:")
+                            print(discovery.finish.summary)
+                            print(
+                                f"\nSaved capability: {artifact_path}"
+                            )
 
-                        return DiscoveryJobResult(
-                            run_id=log.run_id,
-                            dataset_id=dataset_id,
-                            capability_id=capability_id,
-                            model_summary=discovery.finish.summary,
-                            outputs=result,
-                        )
+                            return DiscoveryJobResult(
+                                run_id=log.run_id,
+                                dataset_id=dataset_id,
+                                capability_id=capability_id,
+                                model_summary=discovery.finish.summary,
+                                outputs=result,
+                            )
+
+                        except Exception as error:
+                            reported_error = (
+                                PolicyViolation(blocked_requests[-1])
+                                if blocked_requests
+                                else error
+                            )
+                            failure = _discovery_failure(
+                                error=reported_error,
+                                page=page,
+                                inputs=inputs,
+                                fallback_step=log.current_step,
+                            )
+                            log.mark_failed(
+                                error_type=failure.error_type,
+                                step=failure.step,
+                                action=log.current_action,
+                            )
+
+                            try:
+                                evidence_path = save_failure_evidence(
+                                    page=page,
+                                    log=log,
+                                    failure=failure,
+                                )
+                                log.emit(
+                                    "failure_evidence_saved",
+                                    step=failure.step,
+                                )
+                                print(
+                                    "Failure evidence: "
+                                    f"{evidence_path}"
+                                )
+                            except OSError:
+                                log.emit(
+                                    "failure_evidence_unavailable",
+                                    step=failure.step,
+                                )
+                                print(
+                                    "Failure evidence could not be "
+                                    "written."
+                                )
+
+                            if reported_error is not error:
+                                raise reported_error from error
+
+                            raise
                     finally:
                         browser.close()
+
+
+def _discovery_failure(
+    *,
+    error: Exception,
+    page: Page,
+    inputs: MemberLookupInputs,
+    fallback_step: int | None = None,
+) -> DiscoveryFailure:
+    step = getattr(error, "step", fallback_step)
+
+    if isinstance(error, DiscoveryStepLimitReached):
+        code = "step_limit"
+        expected = "Finish within the bounded discovery budget."
+    elif isinstance(error, DiscoveryTargetTimeout):
+        code = "target_timeout"
+        expected = "Reach an actionable browser target."
+    elif isinstance(error, PolicyViolation):
+        code = "policy_violation"
+        expected = "Remain inside the configured safety policy."
+    elif isinstance(error, HumanTakeoverCancelled):
+        code = "human_takeover_cancelled"
+        expected = "Resume from a validated discovery checkpoint."
+    elif isinstance(error, HumanTakeoverTimedOut):
+        code = "human_takeover_timed_out"
+        expected = "Resume before the takeover timeout."
+    elif isinstance(error, RecordingError):
+        code = "recording_error"
+        expected = "Record a supported, parameterized action."
+    elif isinstance(error, VerificationError):
+        code = "verification_failed"
+        expected = "Verify the discovery result or resume checkpoint."
+    elif isinstance(error, PlaywrightTimeoutError):
+        code = "target_timeout"
+        expected = "Reach the allowlisted discovery target."
+    elif isinstance(error, PlaywrightError):
+        code = "browser_error"
+        expected = "Keep the original browser session available."
+    else:
+        code = "model_error"
+        expected = "Receive a valid model action."
+
+    return DiscoveryFailure(
+        code=code,
+        step=step,
+        expected=expected,
+        observed=describe_observed_state(page, inputs, None),
+        error_type=type(error).__name__,
+    )
 
 
 def replay_capability(

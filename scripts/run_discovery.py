@@ -13,6 +13,7 @@ def main():
         inputs=MemberLookupInputs(
             member_id="DEMO-101",
         ),
+        allow_human_takeover=True,
     )
 
     result = discover_capability(

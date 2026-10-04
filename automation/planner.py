@@ -1,8 +1,10 @@
 import json
+from dataclasses import dataclass
 
 from openai import OpenAI
 
 from automation.actions import NextAction
+from automation.evidence import ModelCallMetadata
 
 MODEL = "gpt-6-luna"
 
@@ -22,11 +24,17 @@ Rules:
 """
 
 
+@dataclass(frozen=True)
+class ModelProposal:
+    request: NextAction
+    metadata: ModelCallMetadata
+
+
 def propose_action(
     client: OpenAI,
     goal: str,
     observation: dict[str, str],
-) -> NextAction:
+) -> ModelProposal:
     response = client.responses.parse(
         model=MODEL,
         instructions=INSTRUCTIONS,
@@ -45,4 +53,15 @@ def propose_action(
     if response.output_parsed is None:
         raise RuntimeError("The model did not return a valid action.")
 
-    return response.output_parsed
+    usage = response.usage
+
+    return ModelProposal(
+        request=response.output_parsed,
+        metadata=ModelCallMetadata(
+            model=response.model,
+            response_id=response.id,
+            input_tokens=(usage.input_tokens if usage else None),
+            output_tokens=(usage.output_tokens if usage else None),
+            total_tokens=(usage.total_tokens if usage else None),
+        ),
+    )

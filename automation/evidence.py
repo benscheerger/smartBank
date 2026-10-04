@@ -1,7 +1,7 @@
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, Self, TextIO, get_args
+from typing import Any, Annotated, Literal, Self, TextIO, get_args
 from uuid import uuid4
 
 from playwright.sync_api import Error as PlaywrightError, Page
@@ -37,6 +37,7 @@ EventName = Literal[
     "handoff_cancelled",
     "handoff_timed_out",
     "handoff_ended",
+    "discovery_blocked",
 ]
 
 ActionKind = Literal[
@@ -63,6 +64,21 @@ ActionPurpose = Literal[
     "verify_account_result",
 ]
 
+InterventionReason = Literal[
+    "discovery_step_limit",
+    "discovery_target_timeout",
+    "replay_recovery_exhausted",
+]
+
+
+class ModelCallMetadata(StrictModel):
+    provider: Literal["openai"] = "openai"
+    model: str = Field(min_length=1)
+    response_id: str = Field(min_length=1)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+
 
 class HumanAction(StrictModel):
     kind: Literal["click", "input", "change"]
@@ -77,7 +93,7 @@ class HumanAction(StrictModel):
 
 
 class EvidenceEvent(StrictModel):
-    schema_version: Literal["1.0", "1.1"]
+    schema_version: Literal["1.0", "1.1", "1.2"]
     timestamp: str
     elapsed_ms: int
     run_id: str
@@ -91,14 +107,58 @@ class EvidenceEvent(StrictModel):
     dataset_id: str | None = None
     purpose: ActionPurpose | None = None
     target_url: str | None = None
+    model_call: ModelCallMetadata | None = None
+    intervention_reason: InterventionReason | None = None
 
     @model_validator(mode="after")
     def validate_target_metadata(self) -> Self:
-        if self.schema_version == "1.0" and self.target_url is not None:
-            raise ValueError("Evidence schema 1.0 cannot include target_url.")
+        if self.schema_version == "1.0":
+            if self.target_url is not None:
+                raise ValueError(
+                    "Evidence schema 1.0 cannot include target_url."
+                )
 
-        if self.schema_version == "1.1" and self.target_url is None:
-            raise ValueError("Evidence schema 1.1 requires target_url.")
+            if self.model_call is not None:
+                raise ValueError(
+                    "Evidence schema 1.0 cannot include model metadata."
+                )
+
+        if self.schema_version in {"1.1", "1.2"}:
+            if self.target_url is None:
+                raise ValueError(
+                    f"Evidence schema {self.schema_version} "
+                    "requires target_url."
+                )
+
+        if self.schema_version == "1.1" and self.model_call is not None:
+            raise ValueError(
+                "Evidence schema 1.1 cannot include model metadata."
+            )
+
+        if self.model_call is not None and (
+            self.mode != "discovery" or self.event != "action_proposed"
+        ):
+            raise ValueError(
+                "Model metadata belongs on discovery action proposals."
+            )
+
+        if (
+            self.schema_version == "1.2"
+            and self.mode == "discovery"
+            and self.event == "action_proposed"
+            and self.model_call is None
+        ):
+            raise ValueError(
+                "Discovery action proposals require model metadata."
+            )
+
+        if self.intervention_reason is not None and self.event not in {
+            "discovery_blocked",
+            "handoff_started",
+        }:
+            raise ValueError(
+                "Intervention reasons belong on blocked or handoff events."
+            )
 
         return self
 
@@ -125,6 +185,14 @@ class RunLog:
         self._action: ActionKind | None = None
         self._failure_error_type: str | None = None
 
+    @property
+    def current_step(self) -> int | None:
+        return self._step
+
+    @property
+    def current_action(self) -> ActionKind | None:
+        return self._action
+
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._file = self.path.open("x", encoding="utf-8")
@@ -147,12 +215,14 @@ class RunLog:
         error_type: str | None = None,
         human_action: HumanAction | None = None,
         purpose: ActionPurpose | None = None,
+        model_call: ModelCallMetadata | None = None,
+        intervention_reason: InterventionReason | None = None,
     ) -> None:
         if self._file is None or self._file.closed:
             raise RuntimeError("The evidence log is not open.")
 
         entry = EvidenceEvent(
-            schema_version="1.1",
+            schema_version="1.2",
             timestamp=datetime.now(timezone.utc).isoformat(),
             elapsed_ms=int(
                 (time.monotonic() - self._started_at) * 1000
@@ -168,6 +238,8 @@ class RunLog:
             dataset_id=self.dataset_id,
             purpose=purpose,
             target_url=self.target_url,
+            model_call=model_call,
+            intervention_reason=intervention_reason,
         )
 
         self._file.write(entry.model_dump_json() + "\n")
@@ -246,15 +318,75 @@ class KnownControls(StrictModel):
     savings_links: int
 
 
+class DiscoveryFailure(StrictModel):
+    status: Literal["discovery_failure"] = "discovery_failure"
+    code: Literal[
+        "step_limit",
+        "target_timeout",
+        "policy_violation",
+        "model_error",
+        "verification_failed",
+        "browser_error",
+        "recording_error",
+        "human_takeover_cancelled",
+        "human_takeover_timed_out",
+    ]
+    step: int | None
+    expected: str
+    observed: str
+    error_type: str
+
+
+RunFailure = Annotated[
+    ReplayFailure | DiscoveryFailure,
+    Field(discriminator="status"),
+]
+
+
 class FailureEvidence(StrictModel):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0", "1.1"] = "1.1"
     run_id: str
     source_run_id: str | None
-    failure: ReplayFailure
+    failure: RunFailure
     dom: DomSnapshot | None
     known_controls: KnownControls | None
     frame_count: int | None
     capture_error: Literal["snapshot_unavailable"] | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def upgrade_legacy_failure(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        if value.get("schema_version") != "1.0":
+            return value
+
+        failure = value.get("failure")
+
+        if not isinstance(failure, dict):
+            return value
+
+        if failure.get("status") != "failure":
+            return value
+
+        upgraded = dict(value)
+        upgraded_failure = dict(failure)
+        upgraded_failure.setdefault("recovery_events", [])
+        upgraded["failure"] = upgraded_failure
+        return upgraded
+
+    @model_validator(mode="after")
+    def validate_version(self) -> Self:
+        if (
+            self.schema_version == "1.0"
+            and isinstance(self.failure, DiscoveryFailure)
+        ):
+            raise ValueError(
+                "Failure evidence schema 1.0 only supports replay failures."
+            )
+
+        return self
 
 
 DOM_CAPTURE = """
@@ -298,7 +430,7 @@ DOM_CAPTURE = """
 def save_failure_evidence(
     page: Page,
     log: RunLog,
-    failure: ReplayFailure,
+    failure: RunFailure,
 ) -> Path:
     dom = None
     controls = None

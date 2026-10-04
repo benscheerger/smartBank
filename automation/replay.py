@@ -5,7 +5,11 @@ from automation.recovery import (
     RecoveryLimitExceeded,
     recover_known_notice,
 )
-from automation.handoff import HumanTakeover
+from automation.handoff import (
+    HumanTakeover,
+    HumanTakeoverCancelled,
+    HumanTakeoverTimedOut,
+)
 from automation.handoff import TakeoverPanelFactory
 
 from playwright.sync_api import (
@@ -36,6 +40,7 @@ from automation.observation import observe_page
 from automation.policy import PolicyViolation, check_url
 from automation.results import (
     FailureCode,
+    RecoveryEvent,
     ReplayBusinessOutcome,
     ReplayFailure,
     ReplayResult,
@@ -152,6 +157,12 @@ def describe_observed_state(
 def classify_failure(error: Exception) -> FailureCode:
     if isinstance(error, PolicyViolation):
         return "policy_violation"
+    if isinstance(error, RecoveryLimitExceeded):
+        return "recovery_exhausted"
+    if isinstance(error, HumanTakeoverCancelled):
+        return "human_takeover_cancelled"
+    if isinstance(error, HumanTakeoverTimedOut):
+        return "human_takeover_timed_out"
     if isinstance(error, CheckpointMismatch):
         return "checkpoint_mismatch"
     if isinstance(error, VerificationError):
@@ -179,6 +190,7 @@ def run_replay(
     current_action: BrowserAction | None = None
     expected = "Navigate to the permitted entry page."
     recovery_budget = RecoveryBudget(limit=1)
+    recovery_events: list[RecoveryEvent] = []
 
     try:
         start_url = urljoin(base_url, capability.start_path)
@@ -220,7 +232,7 @@ def run_replay(
             )
 
             try:
-                recover_known_notice(
+                recovery = recover_known_notice(
                     page=page,
                     log=log,
                     budget=recovery_budget,
@@ -228,7 +240,17 @@ def run_replay(
                     blocked_requests=blocked_requests,
                 )
 
+                if recovery is not None:
+                    recovery_events.append(recovery)
+
             except RecoveryLimitExceeded:
+                recovery_events.append(
+                    RecoveryEvent(
+                        outcome="exhausted",
+                        step=step_index,
+                    )
+                )
+
                 if not allow_human_takeover:
                     raise
 
@@ -258,12 +280,12 @@ def run_replay(
                     "and an unobstructed, unique recorded link."
                 )
 
-                handoff.restore_member_details(
+                recovery_events.append(handoff.restore_member_details(
                     step=step_index,
                     member_id=inputs.member_id,
                     expected_path=expected_pre_action_path,
                     pending_action=pending_action,
-                )
+                ))
             
             action_kind = step.action.kind
             expected = (
@@ -323,6 +345,7 @@ def run_replay(
                     code="member_not_found",
                     member_id=business_outcome.member_id,
                     step=index,
+                    recovery_events=recovery_events,
                 )
 
         current_action = None
@@ -333,13 +356,16 @@ def run_replay(
             "within the recovery budget."
         )
 
-        recover_known_notice(
+        recovery = recover_known_notice(
             page=page,
             log=log,
             budget=recovery_budget,
             step=step_index,
             blocked_requests=blocked_requests,
         )
+
+        if recovery is not None:
+            recovery_events.append(recovery)
         
         expected = (
             "Verify the requested savings account and extract "
@@ -364,7 +390,10 @@ def run_replay(
             "verification_passed",
             purpose="verify_account_result",
         )
-        return ReplaySuccess(outputs=result)
+        return ReplaySuccess(
+            outputs=result,
+            recovery_events=recovery_events,
+        )
 
     except (
         PolicyViolation,
@@ -372,6 +401,26 @@ def run_replay(
         VerificationError,
         PlaywrightError,
     ) as error:
+        if (
+            isinstance(error, RecoveryLimitExceeded)
+            and not (
+                recovery_events
+                and recovery_events[-1].outcome == "exhausted"
+                and recovery_events[-1].step == step_index
+            )
+        ):
+            recovery_events.append(
+                RecoveryEvent(outcome="exhausted", step=step_index)
+            )
+        elif isinstance(error, HumanTakeoverCancelled):
+            recovery_events.append(
+                RecoveryEvent(outcome="cancelled", step=step_index)
+            )
+        elif isinstance(error, HumanTakeoverTimedOut):
+            recovery_events.append(
+                RecoveryEvent(outcome="timed_out", step=step_index)
+            )
+
         failure = ReplayFailure(
             code=classify_failure(error),
             step=step_index,
@@ -380,6 +429,7 @@ def run_replay(
                 page, inputs, current_action
             ),
             error_type=type(error).__name__,
+            recovery_events=recovery_events,
         )
 
         log.mark_failed(

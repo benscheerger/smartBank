@@ -1,4 +1,11 @@
-from playwright.sync_api import BrowserContext, Error, Route
+from typing import Any
+
+from playwright.sync_api import (
+    BrowserContext,
+    Error,
+    Route,
+    WebSocketRoute,
+)
 
 from automation.policy import PolicyViolation, check_request
 
@@ -41,5 +48,20 @@ def install_request_guard(
         finally:
             response.dispose()
 
+    def handle_web_socket(route: WebSocketRoute) -> Any:
+        blocked_requests.append(
+            "WebSocket connections are blocked by policy."
+        )
+
+        # Playwright's sync close call cannot be nested inside its own
+        # WebSocket route callback. Returning the implementation coroutine
+        # lets the route dispatcher await the close on its event loop.
+        implementation = getattr(route, "_impl_obj")
+        return implementation.close(
+            code=1008,
+            reason="Blocked by automation policy.",
+        )
+
+    context.route_web_socket("**/*", handle_web_socket)
     context.route("**/*", handle_request)
     return blocked_requests

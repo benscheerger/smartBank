@@ -7,6 +7,7 @@ from automation.actions import ClickAction
 from automation.evidence import RunLog
 from automation.executor import execute_action
 from automation.policy import PolicyViolation
+from automation.results import RecoveryEvent
 from automation.verification import VerificationError
 
 
@@ -30,7 +31,7 @@ def recover_known_notice(
     budget: RecoveryBudget,
     step: int | None,
     blocked_requests: list[str],
-) -> None:
+) -> RecoveryEvent | None:
     notice = page.get_by_role(
         "dialog",
         name="Service notice",
@@ -40,13 +41,13 @@ def recover_known_notice(
     count = notice.count()
 
     if count == 0:
-        return
+        return None
 
     if count != 1:
         raise VerificationError("Ambiguous service notice.")
 
     if not notice.is_visible():
-        return
+        return None
 
     if budget.attempts >= budget.limit:
         log.emit(
@@ -107,4 +108,9 @@ def recover_known_notice(
         step=step,
         action="click",
         purpose="dismiss_blocking_notice",
+    )
+
+    return RecoveryEvent(
+        outcome="recovered_automatically",
+        step=step,
     )

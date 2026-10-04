@@ -1,0 +1,130 @@
+{
+  "schema_version": "1.1",
+  "run_id": "7782e4bf-8ff8-4012-b693-a31ee1bcb800",
+  "source_run_id": "a38e407f-9c75-4cd0-9a78-868e7e474803",
+  "failure": {
+    "status": "failure",
+    "code": "recovery_exhausted",
+    "step": 4,
+    "expected": "Clear a recognized service notice within the recovery budget.",
+    "observed": "page=member_details; requested_member_matches=True; target_matches=None",
+    "error_type": "RecoveryLimitExceeded",
+    "recovery_events": [
+      {
+        "condition": "blocking_notice",
+        "outcome": "exhausted",
+        "step": 4
+      }
+    ]
+  },
+  "dom": {
+    "nodes": [
+      {
+        "index": 0,
+        "parent_index": null,
+        "tag": "body",
+        "has_layout_box": true,
+        "disabled": false
+      },
+      {
+        "index": 1,
+        "parent_index": 0,
+        "tag": "div",
+        "has_layout_box": true,
+        "disabled": false
+      },
+      {
+        "index": 2,
+        "parent_index": 1,
+        "tag": "div",
+        "has_layout_box": true,
+        "disabled": false
+      },
+      {
+        "index": 3,
+        "parent_index": 2,
+        "tag": "h2",
+        "has_layout_box": true,
+        "disabled": false
+      },
+      {
+        "index": 4,
+        "parent_index": 2,
+        "tag": "p",
+        "has_layout_box": true,
+        "disabled": false
+      },
+      {
+        "index": 5,
+        "parent_index": 2,
+        "tag": "button",
+        "has_layout_box": true,
+        "disabled": false
+      },
+      {
+        "index": 6,
+        "parent_index": 2,
+        "tag": "button",
+        "has_layout_box": false,
+        "disabled": false
+      },
+      {
+        "index": 7,
+        "parent_index": 0,
+        "tag": "a",
+        "has_layout_box": true,
+        "disabled": false
+      },
+      {
+        "index": 8,
+        "parent_index": 0,
+        "tag": "h1",
+        "has_layout_box": true,
+        "disabled": false
+      },
+      {
+        "index": 9,
+        "parent_index": 0,
+        "tag": "p",
+        "has_layout_box": true,
+        "disabled": false
+      },
+      {
+        "index": 10,
+        "parent_index": 0,
+        "tag": "h2",
+        "has_layout_box": true,
+        "disabled": false
+      },
+      {
+        "index": 11,
+        "parent_index": 0,
+        "tag": "ul",
+        "has_layout_box": true,
+        "disabled": false
+      },
+      {
+        "index": 12,
+        "parent_index": 11,
+        "tag": "li",
+        "has_layout_box": true,
+        "disabled": false
+      },
+      {
+        "index": 13,
+        "parent_index": 12,
+        "tag": "a",
+        "has_layout_box": true,
+        "disabled": false
+      }
+    ],
+    "truncated": false
+  },
+  "known_controls": {
+    "member_id_fields": 0,
+    "search_buttons": 0,
+    "savings_links": 1
+  },
+  "frame_count": 1,
+  "capture_error": null
+}

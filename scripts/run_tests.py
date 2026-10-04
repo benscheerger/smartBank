@@ -86,7 +86,10 @@ def main() -> None:
 
     # The shared server is stopped before the workflow test,
     # which starts and stops its own demo servers.
-    workflow_module = "tests.test_workflows"
+    workflow_modules = (
+        "tests.test_workflows",
+        "tests.test_error_contracts",
+    )
 
     if server_available:
         workflow_args = (
@@ -95,14 +98,16 @@ def main() -> None:
             else ()
         )
 
-        results.append(
-            (
-                workflow_module,
-                run_test(workflow_module, *workflow_args),
+        for workflow_module in workflow_modules:
+            results.append(
+                (
+                    workflow_module,
+                    run_test(workflow_module, *workflow_args),
+                )
             )
-        )
     else:
-        results.append((workflow_module, "BLOCKED"))
+        for workflow_module in workflow_modules:
+            results.append((workflow_module, "BLOCKED"))
 
     print("\nTest summary", flush=True)
 

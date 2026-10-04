@@ -13,7 +13,12 @@ from automation.capability import (
     parse_capability_artifact,
 )
 from automation.console import ConsoleController, create_console_app
-from automation.evidence import EvidenceEvent, RunLog
+from automation.evidence import (
+    EvidenceEvent,
+    FailureEvidence,
+    ModelCallMetadata,
+    RunLog,
+)
 from demo_app.server import DemoServer
 
 
@@ -64,6 +69,11 @@ def check_embedded_schemas() -> None:
                 f"The {name} discriminator is not required."
             )
 
+        if "recovery_events" not in required:
+            raise AssertionError(
+                f"The {name} recovery contract is not required."
+            )
+
 
 def check_saved_artifacts() -> tuple[dict[str, Any], dict[str, Any]]:
     paths = sorted(CAPABILITY_DIRECTORY.glob("*.json"))
@@ -73,12 +83,13 @@ def check_saved_artifacts() -> tuple[dict[str, Any], dict[str, Any]]:
 
     sample = None
     legacy_sample = None
-    found_legacy = False
+    found_versions: set[str] = set()
 
     for path in paths:
         original = path.read_bytes()
         data = json.loads(original)
         capability = parse_capability_artifact(data)
+        found_versions.add(data.get("schema_version"))
 
         if path.read_bytes() != original:
             raise AssertionError(f"Loading modified {path.name}.")
@@ -87,16 +98,19 @@ def check_saved_artifacts() -> tuple[dict[str, Any], dict[str, Any]]:
             raise AssertionError(f"Did not upgrade {path.name} in memory.")
 
         if data.get("schema_version") == "1.1":
-            found_legacy = True
-
             if legacy_sample is None:
                 legacy_sample = data
 
         if sample is None:
             sample = capability.model_dump(mode="json")
 
-    if not found_legacy or legacy_sample is None:
-        raise AssertionError("No legacy artifact exercised compatibility.")
+    if found_versions != {"1.1", "1.2", "1.3"}:
+        raise AssertionError(
+            "Capability versions 1.1, 1.2, and 1.3 were not all read."
+        )
+
+    if legacy_sample is None:
+        raise AssertionError("No version 1.1 artifact was available.")
 
     if sample is None:
         raise AssertionError("No capability was available for round-tripping.")
@@ -111,7 +125,7 @@ def check_validation(
     restored = parse_capability_artifact(sample)
 
     if restored.model_dump(mode="json") != sample:
-        raise AssertionError("Version 1.2 did not round-trip.")
+        raise AssertionError("Version 1.3 did not round-trip.")
 
     missing_input = deepcopy(sample)
     missing_input.pop("input_schema")
@@ -173,6 +187,7 @@ def check_discovery_target() -> None:
             "goal": "Find this member's savings balance.",
             "target_url": DemoServer.url,
             "inputs": {"member_id": "DEMO-101"},
+            "allow_human_takeover": True,
         },
     }
 
@@ -206,17 +221,43 @@ def check_discovery_target() -> None:
     if accepted.get_json()["target_url"] != DemoServer.url:
         raise AssertionError("The console did not retain the target URL.")
 
+    if not accepted.get_json()["allow_human_takeover"]:
+        raise AssertionError("The console did not retain takeover support.")
+
 
 def check_evidence_compatibility() -> None:
+    found_versions: set[str] = set()
+
     for path in RUN_DIRECTORY.glob("*.jsonl"):
         original = path.read_bytes()
 
         for line in original.splitlines():
             if line.strip():
-                EvidenceEvent.model_validate_json(line)
+                event = EvidenceEvent.model_validate_json(line)
+                found_versions.add(event.schema_version)
 
         if path.read_bytes() != original:
             raise AssertionError(f"Reading modified {path.name}.")
+
+    if found_versions != {"1.0", "1.1", "1.2"}:
+        raise AssertionError(
+            "Evidence versions 1.0, 1.1, and 1.2 were not all read."
+        )
+
+    failure_versions: set[str] = set()
+
+    for path in RUN_DIRECTORY.glob("*.failure.json"):
+        original = path.read_bytes()
+        evidence = FailureEvidence.model_validate_json(original)
+        failure_versions.add(evidence.schema_version)
+
+        if path.read_bytes() != original:
+            raise AssertionError(f"Reading modified {path.name}.")
+
+    if failure_versions != {"1.0", "1.1"}:
+        raise AssertionError(
+            "Failure evidence versions 1.0 and 1.1 were not both read."
+        )
 
     legacy = EvidenceEvent(
         schema_version="1.0",
@@ -248,11 +289,52 @@ def check_evidence_compatibility() -> None:
         ]
 
     if not events or any(
-        event.schema_version != "1.1"
+        event.schema_version != "1.2"
         or event.target_url != DemoServer.url
         for event in events
     ):
         raise AssertionError("New evidence omitted the target URL.")
+
+    metadata = ModelCallMetadata(
+        model="test-model",
+        response_id="response-test",
+        input_tokens=None,
+        output_tokens=None,
+        total_tokens=None,
+    )
+    proposed = EvidenceEvent(
+        schema_version="1.2",
+        timestamp="2026-01-01T00:00:00+00:00",
+        elapsed_ms=1,
+        run_id="metadata-test",
+        mode="discovery",
+        source_run_id=None,
+        event="action_proposed",
+        step=1,
+        action="fill",
+        error_type=None,
+        target_url=DemoServer.url,
+        model_call=metadata,
+    )
+    serialized = proposed.model_dump_json()
+
+    for forbidden in ("prompt", "observation", "response_text"):
+        if forbidden in serialized:
+            raise AssertionError(
+                f"Model evidence persisted {forbidden}."
+            )
+
+    missing_metadata = proposed.model_dump(mode="json")
+    missing_metadata["model_call"] = None
+
+    try:
+        EvidenceEvent.model_validate(missing_metadata)
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError(
+            "Evidence 1.2 accepted a model action without metadata."
+        )
 
 
 def main() -> None:

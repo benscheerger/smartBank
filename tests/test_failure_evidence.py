@@ -42,6 +42,7 @@ def main():
                     expected="Find one recorded target.",
                     observed="Target matches: zero.",
                     error_type="TimeoutError",
+                    recovery_events=[],
                 )
 
                 with RunLog(

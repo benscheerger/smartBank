@@ -9,6 +9,8 @@ from threading import Event, Lock, Thread
 from types import TracebackType
 from typing import Any, Literal, cast
 
+from automation.evidence import InterventionReason
+
 from flask import (
     Flask,
     Response,
@@ -21,6 +23,7 @@ from werkzeug.serving import WSGIRequestHandler, make_server
 
 
 TakeoverCommand = Literal["resume", "cancel"]
+TakeoverMode = Literal["discovery", "replay"]
 
 TakeoverStatus = Literal[
     "human",
@@ -57,10 +60,16 @@ class OperatorPanel:
         member_id: str,
         step: int,
         timeout_seconds: float,
+        mode: TakeoverMode,
+        task: str,
+        reason: InterventionReason,
     ):
         self.run_id = run_id
         self.member_id = member_id
         self.step = step
+        self.mode = mode
+        self.task = task
+        self.reason = reason
         self.deadline = time.monotonic() + timeout_seconds
 
         self._token = secrets.token_hex(32)
@@ -69,9 +78,15 @@ class OperatorPanel:
         self._finished_seen = Event()
 
         self._status: TakeoverStatus = "human"
-        self._message = (
-            "Automation is paused. Resolve the notice in the "
-            "banking browser, then request resume."
+        self._message = "Automation is paused for operator review."
+        self.instructions = (
+            "Resolve the supported service notice without advancing "
+            "the banking workflow, then request Resume."
+            if mode == "discovery"
+            else (
+                "Resolve the service notice in the banking browser, "
+                "then request Resume."
+            )
         )
 
         template_directory = (
@@ -188,6 +203,10 @@ class OperatorPanel:
             "run_id": self.run_id,
             "member_id": self.member_id,
             "step": self.step,
+            "mode": self.mode,
+            "task": self.task,
+            "reason": self.reason,
+            "instructions": self.instructions,
             "status": status,
             "owner": owner,
             "message": message,
@@ -269,6 +288,9 @@ class ConsoleTakeover:
         step: int,
         timeout_seconds: float,
         url: str,
+        mode: TakeoverMode,
+        task: str,
+        reason: InterventionReason,
     ):
         if timeout_seconds <= 0:
             raise ValueError("Takeover timeout must be positive.")
@@ -277,7 +299,16 @@ class ConsoleTakeover:
         self.member_id = member_id
         self.step = step
         self.url = url
+        self.mode = mode
+        self.task = task
+        self.reason = reason
         self.deadline = time.monotonic() + timeout_seconds
+        self.instructions = (
+            "Resolve only a supported service notice and do not advance "
+            "the banking workflow."
+            if mode == "discovery"
+            else "Repair the service notice in the banking browser."
+        )
 
         self._lock = Lock()
         self._commands: Queue[TakeoverCommand] = Queue(maxsize=1)
@@ -316,12 +347,23 @@ class ConsoleTakeover:
                 "run_id": self.run_id,
                 "member_id": self.member_id,
                 "step": self.step,
+                "mode": self.mode,
+                "task": self.task,
+                "reason": self.reason,
+                "instructions": self.instructions,
                 "status": self._status,
                 "message": self._message,
                 "remaining_seconds": remaining,
                 "can_command": (
                     self._status == "human"
                     and remaining > 0
+                ),
+                "owner": (
+                    "human"
+                    if self._status in {"human", "validating"}
+                    else "automation"
+                    if self._status == "resumed"
+                    else "none"
                 ),
             }
 

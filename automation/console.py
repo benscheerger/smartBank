@@ -11,6 +11,7 @@ from automation.capability import MemberLookupInputs
 from automation.takeover_controls import (
     ConsoleTakeover,
     TakeoverCommand,
+    TakeoverMode,
 )
 
 from flask import (
@@ -31,7 +32,7 @@ from automation.jobs import (
     replay_capability,
 )
 from automation.actions import StrictModel
-from automation.evidence import EvidenceEvent
+from automation.evidence import EvidenceEvent, InterventionReason
 from demo_app.app import get_dataset_path, list_datasets
 from demo_app.server import DemoServer
 
@@ -144,6 +145,9 @@ class ConsoleController:
         member_id: str,
         step: int,
         timeout_seconds: float,
+        mode: TakeoverMode,
+        task: str,
+        reason: InterventionReason,
     ) -> ConsoleTakeover:
         panel = ConsoleTakeover(
             run_id=run_id,
@@ -151,6 +155,9 @@ class ConsoleController:
             step=step,
             timeout_seconds=timeout_seconds,
             url=self.origin,
+            mode=mode,
+            task=task,
+            reason=reason,
         )
 
         with self._lock:
@@ -203,7 +210,7 @@ class ConsoleController:
             target_url = job.task.target_url
             capability_id = None
             notice_mode = None
-            allow_human_takeover = False
+            allow_human_takeover = job.task.allow_human_takeover
         else:
             mode = "replay"
             inputs = job.inputs
@@ -260,6 +267,7 @@ class ConsoleController:
                         job.task,
                         dataset_id=job.dataset_id,
                         on_run_started=self._run_started,
+                        panel_factory=self._make_takeover_panel,
                     )
 
                     self._update(

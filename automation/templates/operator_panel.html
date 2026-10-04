@@ -112,7 +112,13 @@
 
     <dl>
         <dt>Task</dt>
-        <dd>Retrieve a member’s savings balance</dd>
+        <dd id="task">—</dd>
+
+        <dt>Mode</dt>
+        <dd id="mode">—</dd>
+
+        <dt>Reason</dt>
+        <dd id="reason">—</dd>
 
         <dt>Member</dt>
         <dd id="member">—</dd>
@@ -131,12 +137,8 @@
     </dl>
 
     <div class="notice">
-        <strong>Automatic notice recovery was exhausted.</strong>
-        <p>
-            In the banking browser, click
-            <strong>Resolve notice manually</strong>.
-            Stay on the requested member’s details page.
-        </p>
+        <strong>Automation needs operator input.</strong>
+        <p id="instructions">Review the banking browser.</p>
     </div>
 
     <p id="message" aria-live="polite">
@@ -153,8 +155,8 @@
     </div>
 
     <p class="muted">
-        Resume checks the member, page, notice, and recorded link
-        before returning control to automation.
+        Resume validates the live session before returning control
+        to automation.
         The final banking result appears in the terminal.
     </p>
 </main>
@@ -181,6 +183,13 @@
 
         document.getElementById("member").textContent =
             state.member_id;
+
+        document.getElementById("task").textContent = state.task;
+        document.getElementById("mode").textContent = state.mode;
+        document.getElementById("reason").textContent =
+            state.reason.replaceAll("_", " ");
+        document.getElementById("instructions").textContent =
+            state.instructions;
 
         document.getElementById("step").textContent =
             state.step;
