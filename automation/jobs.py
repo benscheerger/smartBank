@@ -36,10 +36,11 @@ from automation.handoff import (
 from automation.handoff import TakeoverPanelFactory
 from automation.network import install_request_guard
 from automation.planner import MODEL
-from automation.policy import PolicyViolation, check_url
+from automation.policy import PolicyViolation, RequestScope, check_url
 from automation.recording import RecordingError
 from automation.replay import describe_observed_state, run_replay
 from automation.results import ReplayResult
+from automation.terminal import redacted_member
 from automation.verification import (
     BalanceResult,
     VerificationError,
@@ -154,6 +155,10 @@ def discover_capability(
 
     inputs = task.inputs
     account_type = "savings"
+    scope = RequestScope(
+        member_id=inputs.member_id,
+        account_type="savings",
+    )
 
     goal = (
         f"Task: {task.goal}\n"
@@ -193,14 +198,15 @@ def discover_capability(
                             service_workers="block"
                         )
                         blocked_requests = install_request_guard(
-                            context
+                            context,
+                            scope,
                         )
 
                         page = context.new_page()
                         page.set_default_timeout(5000)
 
                         try:
-                            check_url(task.target_url)
+                            check_url(task.target_url, scope)
                             page.goto(task.target_url)
 
                             discovery = run_discovery(
@@ -208,6 +214,7 @@ def discover_capability(
                                 page=page,
                                 goal=goal,
                                 inputs=inputs,
+                                scope=scope,
                                 blocked_requests=blocked_requests,
                                 log=log,
                                 max_steps=8,
@@ -226,6 +233,7 @@ def discover_capability(
                                 page=page,
                                 expected_member_id=inputs.member_id,
                                 expected_account_type=account_type,
+                                scope=scope,
                             )
 
                             if blocked_requests:
@@ -289,8 +297,6 @@ def discover_capability(
 
                             log.emit("capability_saved")
 
-                            print("\nModel summary:")
-                            print(discovery.finish.summary)
                             print(
                                 f"\nSaved capability: {artifact_path}"
                             )
@@ -413,6 +419,10 @@ def replay_capability(
     panel_factory: TakeoverPanelFactory | None = None,
 ) -> ReplayJobResult:
     capability = load_saved_capability(capability_id)
+    scope = RequestScope(
+        member_id=inputs.member_id,
+        account_type="savings",
+    )
 
     with RunLog(
         directory=PROJECT_ROOT / "evidence" / "runs",
@@ -428,7 +438,7 @@ def replay_capability(
         print(f"Replaying: {capability.name}")
         print(f"Target: {DemoServer.url}")
         print(f"Dataset: {dataset_id}")
-        print(f"Member: {inputs.member_id}")
+        print(redacted_member())
 
         with DemoServer(
             dataset_id=dataset_id,
@@ -445,7 +455,8 @@ def replay_capability(
                         service_workers="block"
                     )
                     blocked_requests = install_request_guard(
-                        context
+                        context,
+                        scope,
                     )
 
                     page = context.new_page()
@@ -455,6 +466,7 @@ def replay_capability(
                         page=page,
                         capability=capability,
                         inputs=inputs,
+                        scope=scope,
                         blocked_requests=blocked_requests,
                         base_url=demo.url,
                         log=log,

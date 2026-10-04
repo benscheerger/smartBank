@@ -3,8 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from automation.terminal import run_cli
 from demo_app.server import DemoServer, DemoServerStartError
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TEST_TIMEOUT_SECONDS = 600
@@ -77,7 +77,7 @@ def main() -> None:
     except DemoServerStartError as exc:
         server_available = False
         print(
-            f"\nDemo server setup failed: {exc}",
+            f"\nDemo server setup failed: {type(exc).__name__}",
             flush=True,
         )
 
@@ -89,6 +89,7 @@ def main() -> None:
     workflow_modules = (
         "tests.test_workflows",
         "tests.test_error_contracts",
+        "tests.test_terminal_privacy",
     )
 
     if server_available:
@@ -132,8 +133,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\nTest run interrupted.", flush=True)
-        raise SystemExit(130)
+    run_cli(main)

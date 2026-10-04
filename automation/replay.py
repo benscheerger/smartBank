@@ -37,7 +37,7 @@ from automation.capability import (
 from automation.evidence import ActionKind, RunLog, save_failure_evidence
 from automation.executor import execute_action
 from automation.observation import observe_page
-from automation.policy import PolicyViolation, check_url
+from automation.policy import PolicyViolation, RequestScope, check_url
 from automation.results import (
     FailureCode,
     RecoveryEvent,
@@ -46,6 +46,7 @@ from automation.results import (
     ReplayResult,
     ReplaySuccess,
 )
+from automation.terminal import action_progress
 from automation.verification import VerificationError, verify_balance
 
 
@@ -178,6 +179,7 @@ def run_replay(
     page: Page,
     capability: Capability,
     inputs: MemberLookupInputs,
+    scope: RequestScope,
     blocked_requests: list[str],
     base_url: str,
     log: RunLog,
@@ -194,7 +196,7 @@ def run_replay(
 
     try:
         start_url = urljoin(base_url, capability.start_path)
-        check_url(start_url)
+        check_url(start_url, scope)
         page.goto(start_url)
 
         if blocked_requests:
@@ -204,6 +206,7 @@ def run_replay(
             page=page,
             log=log,
             blocked_requests=blocked_requests,
+            scope=scope,
             enabled=allow_human_takeover,
             panel_factory=panel_factory,
         )
@@ -238,6 +241,7 @@ def run_replay(
                     budget=recovery_budget,
                     step=step_index,
                     blocked_requests=blocked_requests,
+                    scope=scope,
                 )
 
                 if recovery is not None:
@@ -294,14 +298,14 @@ def run_replay(
             )
 
             current_action = resolve_action(step.action, inputs)
-            execute_action(page, current_action)
+            execute_action(page, current_action, scope)
 
             observation = observe_page(page)
 
             if blocked_requests:
                 raise PolicyViolation(blocked_requests[-1])
 
-            check_url(observation["url"])
+            check_url(observation["url"], scope)
 
             actual_path = urlsplit(observation["url"]).path
             expected_path = step.checkpoint.expected_path.resolve(inputs)
@@ -322,14 +326,19 @@ def run_replay(
             )
 
             print(
-                f"Step {index}/{len(capability.steps)}: "
-                f"{current_action.kind} — checkpoint passed"
+                action_progress(
+                    step=index,
+                    total=len(capability.steps),
+                    action=action_kind,
+                    purpose=purpose,
+                )
             )
 
             expected = "Recognize any supported business outcome."
             business_outcome = detect_member_not_found(
                 page=page,
                 expected_member_id=inputs.member_id,
+                scope=scope,
             )
 
             if blocked_requests:
@@ -362,6 +371,7 @@ def run_replay(
             budget=recovery_budget,
             step=step_index,
             blocked_requests=blocked_requests,
+            scope=scope,
         )
 
         if recovery is not None:
@@ -381,6 +391,7 @@ def run_replay(
             page=page,
             expected_member_id=inputs.member_id,
             expected_account_type="savings",
+            scope=scope,
         )
 
         if blocked_requests:

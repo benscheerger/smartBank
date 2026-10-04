@@ -6,7 +6,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from automation.actions import ClickAction
 from automation.evidence import RunLog
 from automation.executor import execute_action
-from automation.policy import PolicyViolation
+from automation.policy import PolicyViolation, RequestScope
 from automation.results import RecoveryEvent
 from automation.verification import VerificationError
 
@@ -31,6 +31,7 @@ def recover_known_notice(
     budget: RecoveryBudget,
     step: int | None,
     blocked_requests: list[str],
+    scope: RequestScope,
 ) -> RecoveryEvent | None:
     notice = page.get_by_role(
         "dialog",
@@ -81,6 +82,7 @@ def recover_known_notice(
             role="button",
             name="Dismiss notice",
         ),
+        scope,
     )
 
     if blocked_requests:

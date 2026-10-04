@@ -68,7 +68,7 @@ The model is selected by `MODEL` in `automation/planner.py`. The tested model is
 
 ### Policy configuration
 
-The default policy is in `config/policy.json`. It defines permitted origins, paths, request methods, action types, fields, and buttons. Configured risky button names remain blocked even if included in the permitted-button list.
+The default policy is in `config/policy.json`. It defines permitted origins, paths, request methods, action types, fields, and buttons. Each run further restricts navigation and entered values to the requested member and that member’s savings account. Configured risky button names remain blocked even if included in the permitted-button list.
 
 `AUTOMATION_POLICY_FILE` can select a different policy file when starting the program. Policy changes take effect when the process starts.
 
@@ -104,7 +104,7 @@ evidence/capabilities/get_savings_balance_<run-id>.json
 
 It also updates `get_savings_balance.json`, the convenience alias for the latest successful recording.
 
-New recordings use capability schema `1.3`. Their embedded input and output JSON Schemas are generated from the runtime Pydantic models and validated when loaded. Existing `1.1` and `1.2` artifacts remain supported through an in-memory compatibility upgrade; version `1.2` contracts are validated against their frozen schemas, and loading archived artifacts does not modify their files.
+New recordings use capability schema `1.3`. Their embedded input and output JSON Schemas are generated from the runtime Pydantic models and validated when loaded. Existing `1.1` and `1.2` artifacts remain supported through an in-memory compatibility upgrade; the version `1.2` input schema is fixed independently of the current input model, its output contract uses frozen legacy models, and loading archived artifacts does not modify their files.
 
 ### Replay with another member
 
@@ -195,7 +195,7 @@ Action-step events now include fixed purposes such as `enter_member_id` and `ope
 
 Saved JSONL events omit prompts, raw page observations, model response content, summaries, and entered values. When a browser page is available, failure capture uses schema `1.1` and saves up to 200 DOM nodes with structural information and known-control counts, excluding page text, field values, and raw attributes. Archived `1.0` captures remain readable. If a capture cannot be written, the run records that failure evidence is unavailable.
 
-Terminal output includes proposed actions and the model summary.
+Terminal diagnostics contain only safe run metadata, redacted identifiers, and fixed action, purpose, status, recovery, and failure fields. Caller-facing results and the authenticated local console continue to expose the verified task output, but raw member IDs, entered values, page observations, model text, and verified banking outputs are not printed to the terminal.
 
 ### Evidence examples
 
@@ -211,7 +211,7 @@ The following fresh canonical set demonstrates discovery for `DEMO-101` and repl
 
 The workflow checks passed for verified outputs, capability provenance, event order, recovery events, and saved purpose labels. Every replay in this set references the discovery run through `source_run_id`.
 
-The default test suite also passed all seven modules: capability contracts, policy, failure-evidence privacy, browser interaction and verification, business outcomes, workflows, and end-to-end error contracts.
+The default test suite also passed all eight modules: capability contracts, policy, failure-evidence privacy, browser interaction and verification, business outcomes, workflows, end-to-end error contracts, and terminal-output privacy.
 
 Older artifacts and logs remain in place for compatibility checks and historical evidence.
 

@@ -1,17 +1,31 @@
 from __future__ import annotations
-from typing import Literal
-from threading import Thread
 
-from werkzeug.serving import BaseWSGIServer, make_server
+from threading import Thread
+from typing import Any, Literal
+
+from werkzeug.serving import (
+    BaseWSGIServer,
+    WSGIRequestHandler,
+    make_server,
+)
 
 from demo_app.app import create_app
-
 
 DemoTargetUrl = Literal["http://127.0.0.1:8000/"]
 
 
 class DemoServerStartError(RuntimeError):
     pass
+
+
+class QuietDemoRequestHandler(WSGIRequestHandler):
+    def log(
+        self,
+        type: str,
+        message: str,
+        *args: Any,
+    ) -> None:
+        pass
 
 
 class DemoServer:
@@ -41,6 +55,7 @@ class DemoServer:
                 8000,
                 app,
                 threaded=True,
+                request_handler=QuietDemoRequestHandler,
             )
         except (OSError, SystemExit) as exc:
             raise DemoServerStartError(

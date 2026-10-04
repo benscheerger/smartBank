@@ -10,7 +10,13 @@ from automation.capability import (
 )
 from automation.evidence import RunLog
 from automation.network import install_request_guard
+from automation.policy import RequestScope
 from automation.replay import run_replay
+from automation.terminal import (
+    redacted_member,
+    replay_result_lines,
+    run_cli,
+)
 from demo_app.server import DemoServer
 
 
@@ -26,6 +32,7 @@ def main():
     args = parser.parse_args()
 
     inputs = MemberLookupInputs(member_id=args.member_id)
+    scope = RequestScope(member_id=inputs.member_id)
 
     project_root = Path(__file__).resolve().parents[1]
 
@@ -60,26 +67,27 @@ def main():
                 context = browser.new_context(
                     service_workers="block"
                 )
-                blocked_requests = install_request_guard(context)
+                blocked_requests = install_request_guard(context, scope)
 
                 page = context.new_page()
                 page.set_default_timeout(5000)
 
                 print(f"Replaying: {capability.name}")
-                print(f"Member: {inputs.member_id}")
+                print(redacted_member())
 
                 result = run_replay(
                     page=page,
                     capability=capability,
                     inputs=inputs,
+                    scope=scope,
                     blocked_requests=blocked_requests,
                     base_url=DemoServer.url,
                     log=log,
                     allow_human_takeover=args.human_takeover,
                 )
 
-                print("\nReplay result:")
-                print(result.model_dump_json(indent=2))
+                for line in replay_result_lines(result):
+                    print(line)
 
             finally:
                 browser.close()
@@ -89,4 +97,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run_cli(main)

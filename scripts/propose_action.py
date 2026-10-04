@@ -6,8 +6,9 @@ from playwright.sync_api import sync_playwright
 
 from automation.network import install_request_guard
 from automation.observation import observe_page
-from automation.planner import MODEL, propose_action
-from automation.policy import PolicyViolation, check_url
+from automation.planner import propose_action
+from automation.policy import PolicyViolation, RequestScope, check_url
+from automation.terminal import proposal_lines, run_cli
 
 
 def main():
@@ -24,6 +25,7 @@ def main():
         "account's available balance and currency."
     )
     start_url = "http://127.0.0.1:8000/"
+    scope = RequestScope(member_id="DEMO-101")
 
     with OpenAI(timeout=30.0, max_retries=0) as client:
         with sync_playwright() as playwright:
@@ -31,12 +33,12 @@ def main():
 
             try:
                 context = browser.new_context(service_workers="block")
-                blocked_requests = install_request_guard(context)
+                blocked_requests = install_request_guard(context, scope)
 
                 page = context.new_page()
                 page.set_default_timeout(5000)
 
-                check_url(start_url)
+                check_url(start_url, scope)
                 page.goto(start_url)
                 observation = observe_page(page)
 
@@ -49,9 +51,12 @@ def main():
                     observation=observation,
                 )
 
-                print(f"Model: {MODEL}")
-                print(proposal.request.model_dump_json(indent=2))
-                print(proposal.metadata.model_dump_json(indent=2))
+                for line in proposal_lines(
+                    action=proposal.request.action.kind,
+                    metadata=proposal.metadata,
+                ):
+                    print(line)
+
                 print("Proposal only; no action was executed.")
 
             finally:
@@ -59,4 +64,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run_cli(main)

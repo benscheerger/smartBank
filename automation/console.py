@@ -1,5 +1,4 @@
 import secrets
-import traceback
 from copy import deepcopy
 from pathlib import Path
 from queue import Full, Queue
@@ -13,6 +12,7 @@ from automation.takeover_controls import (
     TakeoverCommand,
     TakeoverMode,
 )
+from automation.terminal import exception_line
 
 from flask import (
     Flask,
@@ -328,8 +328,7 @@ class ConsoleController:
                     error_type=type(exc).__name__,
                 )
 
-                print(f"\nRun failed: {type(exc).__name__}")
-                traceback.print_tb(exc.__traceback__)
+                print(exception_line(exc))
 
             finally:
                 with self._lock:

@@ -9,7 +9,7 @@
     "allowed_path_patterns": [
       "/",
       "/members/DEMO-[0-9]+",
-      "/members/DEMO-[0-9]+/accounts/[a-z]+"
+      "/members/DEMO-[0-9]+/accounts/savings"
     ],
     "allowed_methods": [
       "GET"

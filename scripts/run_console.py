@@ -9,6 +9,7 @@ from automation.console import (
     create_console_app,
 )
 from automation.takeover_controls import QuietRequestHandler
+from automation.terminal import run_cli
 
 
 def main():
@@ -56,4 +57,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run_cli(main)

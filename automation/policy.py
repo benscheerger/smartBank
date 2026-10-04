@@ -3,7 +3,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from pydantic import Field
 
@@ -18,6 +18,19 @@ from automation.actions import (
 
 class PolicyViolation(Exception):
     """The requested operation is outside the permitted workflow."""
+
+
+@dataclass(frozen=True)
+class RequestScope:
+    member_id: str
+    account_type: Literal["savings"] = "savings"
+
+    def __post_init__(self) -> None:
+        if re.fullmatch(r"DEMO-[0-9]+", self.member_id) is None:
+            raise ValueError("Request scope has an invalid member ID.")
+
+        if self.account_type != "savings":
+            raise ValueError("Request scope has an unsupported account type.")
 
 
 class AllowedOrigin(StrictModel):
@@ -80,6 +93,7 @@ DEFAULT_POLICY = load_policy(POLICY_PATH)
 
 def check_url(
     url: str,
+    scope: RequestScope,
     policy: LoadedPolicy = DEFAULT_POLICY,
 ) -> None:
     try:
@@ -114,13 +128,43 @@ def check_url(
     ):
         raise PolicyViolation("Destination path is not allowed.")
 
+    if parsed.fragment:
+        raise PolicyViolation("URL fragments are outside the request scope.")
+
+    if parsed.path == "/":
+        query = parse_qsl(parsed.query, keep_blank_values=True)
+
+        if query not in ([], [("member_id", scope.member_id)]):
+            raise PolicyViolation(
+                "Search parameters are outside the request scope."
+            )
+
+        return
+
+    if parsed.query:
+        raise PolicyViolation(
+            "Detail-page parameters are outside the request scope."
+        )
+
+    allowed_paths = {
+        f"/members/{scope.member_id}",
+        (
+            f"/members/{scope.member_id}/accounts/"
+            f"{scope.account_type}"
+        ),
+    }
+
+    if parsed.path not in allowed_paths:
+        raise PolicyViolation("Destination is outside the request scope.")
+
 
 def check_request(
     url: str,
     method: str,
+    scope: RequestScope,
     policy: LoadedPolicy = DEFAULT_POLICY,
 ) -> None:
-    check_url(url, policy)
+    check_url(url, scope, policy)
 
     if method.upper() not in policy.config.allowed_methods:
         raise PolicyViolation("HTTP method is not allowed.")
@@ -128,6 +172,7 @@ def check_request(
 
 def check_action(
     action: BrowserAction,
+    scope: RequestScope,
     policy: LoadedPolicy = DEFAULT_POLICY,
 ) -> None:
     config = policy.config
@@ -138,6 +183,9 @@ def check_action(
     if isinstance(action, FillAction):
         if action.label not in config.allowed_fill_labels:
             raise PolicyViolation("Filling this field is not allowed.")
+
+        if action.value != scope.member_id:
+            raise PolicyViolation("Entered value is outside the request scope.")
 
     elif isinstance(action, ClickAction):
         if action.role == "button":

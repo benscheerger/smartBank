@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 from playwright.sync_api import Page
 
 from automation.actions import StrictModel
-from automation.policy import check_url
+from automation.policy import RequestScope, check_url
 from automation.verification import VerificationError
 
 
@@ -16,6 +16,7 @@ class MemberNotFoundResult(StrictModel):
 def detect_member_not_found(
     page: Page,
     expected_member_id: str,
+    scope: RequestScope,
 ) -> MemberNotFoundResult | None:
     marker = page.locator('[data-outcome="member_not_found"]')
     count = marker.count()
@@ -35,7 +36,7 @@ def detect_member_not_found(
     ).input_value()
 
     current_url = page.url
-    check_url(current_url)
+    check_url(current_url, scope)
 
     parsed = urlsplit(current_url)
     query = parse_qs(parsed.query)

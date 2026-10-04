@@ -6,6 +6,11 @@ from automation.jobs import (
     discover_capability,
     replay_capability,
 )
+from automation.terminal import (
+    discovery_result_lines,
+    replay_result_lines,
+    run_cli,
+)
 from demo_app.server import DemoServer
 
 
@@ -25,8 +30,12 @@ def main() -> None:
         dataset_id="members",
     )
 
-    print("\nDiscovery result:")
-    print(discovery.model_dump_json(indent=2))
+    for line in discovery_result_lines(
+        run_id=discovery.run_id,
+        dataset_id=discovery.dataset_id,
+        capability_id=discovery.capability_id,
+    ):
+        print(line)
 
     replay = replay_capability(
         MemberLookupInputs(member_id="DEMO-202"),
@@ -36,12 +45,12 @@ def main() -> None:
         allow_human_takeover=False,
     )
 
-    print("\nReplay result:")
-    print(replay.model_dump_json(indent=2))
+    for line in replay_result_lines(replay.replay_result):
+        print(line)
 
     if replay.replay_result.status != "success":
         raise SystemExit(1)
 
 
 if __name__ == "__main__":
-    main()
+    run_cli(main)

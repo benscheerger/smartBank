@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import Page
 
 from automation.actions import StrictModel
-from automation.policy import check_url
+from automation.policy import RequestScope, check_url
 
 
 class VerificationError(Exception):
@@ -49,6 +49,7 @@ def verify_balance(
     page: Page,
     expected_member_id: str,
     expected_account_type: str,
+    scope: RequestScope,
 ) -> BalanceResult:
     # A browser call also brings Playwright's page state up to date.
     heading = page.get_by_role(
@@ -62,7 +63,7 @@ def verify_balance(
         raise VerificationError("Expected account heading is missing.")
 
     current_url = page.url
-    check_url(current_url)
+    check_url(current_url, scope)
 
     expected_path = (
         f"/members/{expected_member_id}"

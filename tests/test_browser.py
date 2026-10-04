@@ -2,6 +2,7 @@ from playwright.sync_api import expect, sync_playwright
 from automation.actions import ClickAction, FillAction
 from automation.executor import execute_action
 from automation.network import install_request_guard
+from automation.policy import PolicyViolation, RequestScope
 from automation.verification import VerificationError, verify_balance
 
 def main():
@@ -12,8 +13,9 @@ def main():
         )
 
         try:
+            scope = RequestScope(member_id="DEMO-101")
             context = browser.new_context(service_workers="block")
-            blocked_requests = install_request_guard(context)
+            blocked_requests = install_request_guard(context, scope)
             page = context.new_page()
             page.set_default_timeout(5000)
 
@@ -44,7 +46,7 @@ def main():
             ]
 
             for action in actions:
-                execute_action(page, action)
+                execute_action(page, action, scope)
 
             # Verify that we reached the expected account.
             expect(
@@ -61,13 +63,18 @@ def main():
 
             print("Browser check passed.")
             
-            result = verify_balance(page, "DEMO-101", "savings")
+            result = verify_balance(
+                page,
+                "DEMO-101",
+                "savings",
+                scope,
+            )
             assert result.member_id == "DEMO-101"
             assert result.currency == "USD"
             print("Result verification passed.")
 
             try:
-                verify_balance(page, "DEMO-202", "savings")
+                verify_balance(page, "DEMO-202", "savings", scope)
             except VerificationError:
                 print("Wrong-member verification correctly rejected.")
             else:
@@ -94,6 +101,48 @@ def main():
             )
 
             print("Network policy check passed:", blocked_requests[-1])
+
+            page.set_content(
+                '<a href="/members/DEMO-202">Other member</a>'
+            )
+
+            try:
+                execute_action(
+                    page,
+                    ClickAction(
+                        kind="click",
+                        role="link",
+                        name="Other member",
+                    ),
+                    scope,
+                )
+            except PolicyViolation:
+                pass
+            else:
+                raise AssertionError(
+                    "A model-selected wrong-member link was allowed."
+                )
+
+            blocked_before = len(blocked_requests)
+            page.evaluate(
+                """
+                () => [
+                    "/members/DEMO-202",
+                    "/members/DEMO-101/accounts/checking",
+                ].forEach(path => {
+                    const frame = document.createElement("iframe");
+                    frame.src = path;
+                    document.body.append(frame);
+                })
+                """
+            )
+            page.wait_for_timeout(500)
+
+            assert len(blocked_requests) == blocked_before + 2
+            assert all(
+                "DEMO-202" not in reason
+                for reason in blocked_requests
+            )
 
         finally:
             browser.close()

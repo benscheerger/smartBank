@@ -9,12 +9,21 @@ from automation.actions import (
     FillAction,
     LinkClickAction,
 )
-from automation.policy import PolicyViolation, check_action, check_url
+from automation.policy import (
+    PolicyViolation,
+    RequestScope,
+    check_action,
+    check_url,
+)
 
 
-def execute_action(page: Page, action: BrowserAction) -> None:
-    check_url(page.url)
-    check_action(action)
+def execute_action(
+    page: Page,
+    action: BrowserAction,
+    scope: RequestScope,
+) -> None:
+    check_url(page.url, scope)
+    check_action(action, scope)
 
     if isinstance(action, FillAction):
         page.get_by_label(action.label, exact=True).fill(action.value)
@@ -32,12 +41,12 @@ def execute_action(page: Page, action: BrowserAction) -> None:
             if href is None:
                 raise PolicyViolation("Link has no inspectable destination.")
 
-            check_url(urljoin(page.url, href))
+            check_url(urljoin(page.url, href), scope)
 
         target.click()
 
     elif isinstance(action, LinkClickAction):
-        check_url(urljoin(page.url, action.href))
+        check_url(urljoin(page.url, action.href), scope)
 
         # Match an actual link in the UI by its exact recorded destination.
         selector = f"a[href={json.dumps(action.href)}]"

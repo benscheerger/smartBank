@@ -77,19 +77,33 @@ class CapabilityStep(StrictModel):
     checkpoint: PageCheckpoint
 
 
-def _build_input_schema(version: str) -> dict[str, Any]:
+def build_input_schema() -> dict[str, Any]:
     return {
         "$schema": JSON_SCHEMA_DIALECT,
         "$id": (
             "urn:smartbank:get_savings_balance:"
-            f"{version}:inputs"
+            f"{CAPABILITY_SCHEMA_VERSION}:inputs"
         ),
         **MemberLookupInputs.model_json_schema(mode="validation"),
     }
 
 
-def build_input_schema() -> dict[str, Any]:
-    return _build_input_schema(CAPABILITY_SCHEMA_VERSION)
+def _build_input_schema_v12() -> dict[str, Any]:
+    return {
+        "$schema": JSON_SCHEMA_DIALECT,
+        "$id": "urn:smartbank:get_savings_balance:1.2:inputs",
+        "additionalProperties": False,
+        "properties": {
+            "member_id": {
+                "pattern": r"^DEMO-[0-9]+$",
+                "title": "Member Id",
+                "type": "string",
+            }
+        },
+        "required": ["member_id"],
+        "title": "MemberLookupInputs",
+        "type": "object",
+    }
 
 
 def _build_output_schema(
@@ -113,8 +127,9 @@ def build_output_schema() -> dict[str, Any]:
     )
 
 
-# These models preserve the generated schema embedded in version 1.2
-# artifacts. Their names intentionally match the original $defs keys.
+# The literal input builder above and these output models preserve the
+# contracts embedded in version 1.2 artifacts. The output model names
+# intentionally match the original $defs keys.
 class ReplaySuccess(StrictModel):
     status: Literal["success"] = "success"
     outputs: BalanceResult
@@ -187,7 +202,7 @@ class _CapabilityV12(StrictModel):
 
     @model_validator(mode="after")
     def validate_contract_schemas(self) -> Self:
-        if self.input_schema != _build_input_schema("1.2"):
+        if self.input_schema != _build_input_schema_v12():
             raise ValueError(
                 "input_schema does not match the version 1.2 contract."
             )

@@ -7,11 +7,12 @@ from playwright.sync_api import (
     WebSocketRoute,
 )
 
-from automation.policy import PolicyViolation, check_request
+from automation.policy import PolicyViolation, RequestScope, check_request
 
 
 def install_request_guard(
     context: BrowserContext,
+    scope: RequestScope,
 ) -> list[str]:
     blocked_requests: list[str] = []
 
@@ -19,7 +20,7 @@ def install_request_guard(
         request = route.request
 
         try:
-            check_request(request.url, request.method)
+            check_request(request.url, request.method, scope)
 
         except PolicyViolation as error:
             blocked_requests.append(str(error))

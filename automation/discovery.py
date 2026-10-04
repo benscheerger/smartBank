@@ -16,12 +16,13 @@ from automation.executor import execute_action
 from automation.handoff import HumanTakeover, TakeoverPanelFactory
 from automation.observation import observe_page
 from automation.planner import propose_action
-from automation.policy import PolicyViolation, check_url
+from automation.policy import PolicyViolation, RequestScope, check_url
 from automation.recording import (
     parameterize_path,
     record_action,
     recorded_action_purpose,
 )
+from automation.terminal import action_progress
 
 
 @dataclass
@@ -54,6 +55,7 @@ def run_discovery(
     page: Page,
     goal: str,
     inputs: MemberLookupInputs,
+    scope: RequestScope,
     blocked_requests: list[str],
     log: RunLog,
     max_steps: int = 8,
@@ -69,6 +71,7 @@ def run_discovery(
         page=page,
         log=log,
         blocked_requests=blocked_requests,
+        scope=scope,
         enabled=allow_human_takeover,
         panel_factory=panel_factory,
     )
@@ -107,10 +110,14 @@ def run_discovery(
                 model_call=proposal.metadata,
             )
 
-            print(f"\nStep {step}")
-            print(action.model_dump_json(indent=2))
-
             if isinstance(action, FinishAction):
+                print(
+                    action_progress(
+                        step=step,
+                        action="finish",
+                        purpose="report_observed_result",
+                    )
+                )
                 return DiscoveryRun(
                     run_id=run_id,
                     finish=action,
@@ -118,8 +125,21 @@ def run_discovery(
                 )
 
             try:
-                recorded_action = record_action(page, action, inputs)
+                recorded_action = record_action(
+                    page,
+                    action,
+                    inputs,
+                    scope,
+                )
                 purpose = recorded_action_purpose(recorded_action, inputs)
+
+                print(
+                    action_progress(
+                        step=step,
+                        action=action.kind,
+                        purpose=purpose,
+                    )
+                )
 
                 log.emit(
                     "step_started",
@@ -128,7 +148,7 @@ def run_discovery(
                     purpose=purpose,
                 )
 
-                execute_action(page, action)
+                execute_action(page, action, scope)
                 after = observe_page(page)
 
             except PlaywrightTimeoutError as error:
@@ -162,7 +182,7 @@ def run_discovery(
             if blocked_requests:
                 raise PolicyViolation(blocked_requests[-1])
 
-            check_url(after["url"])
+            check_url(after["url"], scope)
             checkpoint = PageCheckpoint(
                 expected_path=parameterize_path(
                     urlsplit(after["url"]).path,

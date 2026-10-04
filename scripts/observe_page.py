@@ -1,8 +1,8 @@
-import json
-
 from playwright.sync_api import sync_playwright
 
 from automation.observation import observe_page
+from automation.terminal import observation_lines, run_cli
+
 
 def main():
     with sync_playwright() as playwright:
@@ -17,7 +17,12 @@ def main():
 
             while True:
                 observation = observe_page(page)
-                print(json.dumps(observation, indent=2))
+
+                for line in observation_lines(
+                    url=observation["url"],
+                    snapshot_chars=len(observation["snapshot"]),
+                ):
+                    print(line)
 
                 command = input(
                     "\nNavigate in the browser, then press Enter "
@@ -32,4 +37,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run_cli(main)

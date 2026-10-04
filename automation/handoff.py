@@ -25,6 +25,7 @@ from automation.evidence import (
 )
 from automation.policy import (
     PolicyViolation,
+    RequestScope,
     check_action,
     check_url,
 )
@@ -120,6 +121,7 @@ class HumanTakeover:
         page: Page,
         log: RunLog,
         blocked_requests: list[str],
+        scope: RequestScope,
         enabled: bool,
         timeout_seconds: float = 180,
         panel_factory: TakeoverPanelFactory | None = None,
@@ -130,6 +132,7 @@ class HumanTakeover:
         self.page = page
         self.log = log
         self.blocked_requests = blocked_requests
+        self.scope = scope
         self.enabled = enabled
         self.timeout_seconds = timeout_seconds
 
@@ -220,7 +223,7 @@ class HumanTakeover:
                 "A browser request was blocked during takeover."
             )
 
-        check_url(self.page.url)
+        check_url(self.page.url, self.scope)
 
         if self.page.context.pages != [self.page]:
             raise VerificationError(
@@ -280,9 +283,10 @@ class HumanTakeover:
                 "The service notice is still visible."
             )
 
-        check_action(pending_action)
+        check_action(pending_action, self.scope)
         check_url(
-            urljoin(self.page.url, pending_action.href)
+            urljoin(self.page.url, pending_action.href),
+            self.scope,
         )
 
         selector = f"a[href={json.dumps(pending_action.href)}]"

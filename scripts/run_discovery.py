@@ -1,5 +1,6 @@
 from automation.capability import MemberLookupInputs
 from automation.jobs import DiscoveryTask, discover_capability
+from automation.terminal import discovery_result_lines, run_cli
 from demo_app.server import DemoServer
 
 
@@ -21,9 +22,13 @@ def main():
         dataset_id="members",
     )
 
-    print("\nDiscovery result:")
-    print(result.model_dump_json(indent=2))
+    for line in discovery_result_lines(
+        run_id=result.run_id,
+        dataset_id=result.dataset_id,
+        capability_id=result.capability_id,
+    ):
+        print(line)
 
 
 if __name__ == "__main__":
-    main()
+    run_cli(main)

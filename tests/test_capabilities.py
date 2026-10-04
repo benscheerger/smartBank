@@ -3,11 +3,13 @@ from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
 from automation.capability import (
     CAPABILITY_SCHEMA_VERSION,
+    MemberLookupInputs,
     build_input_schema,
     build_output_schema,
     parse_capability_artifact,
@@ -158,6 +160,43 @@ def check_validation(
     require_rejected(malformed_legacy, "malformed-legacy")
 
     require_rejected([], "non-object")
+
+
+def check_v12_input_contract_is_frozen() -> None:
+    path = next(
+        path
+        for path in sorted(CAPABILITY_DIRECTORY.glob("*.json"))
+        if json.loads(path.read_text(encoding="utf-8")).get(
+            "schema_version"
+        )
+        == "1.2"
+    )
+    original = path.read_bytes()
+    artifact = json.loads(original)
+
+    future_schema = {
+        "title": "FutureMemberLookupInputs",
+        "type": "object",
+    }
+
+    with patch.object(
+        MemberLookupInputs,
+        "model_json_schema",
+        return_value=future_schema,
+    ):
+        upgraded = parse_capability_artifact(artifact)
+
+    if upgraded.input_schema["title"] != "FutureMemberLookupInputs":
+        raise AssertionError("Version 1.2 was not upgraded in memory.")
+
+    changed = deepcopy(artifact)
+    changed["input_schema"]["properties"]["member_id"][
+        "pattern"
+    ] = ".*"
+    require_rejected(changed, "changed-version-1.2-input-schema")
+
+    if path.read_bytes() != original:
+        raise AssertionError("Version 1.2 validation modified its artifact.")
 
 
 def check_discovery_target() -> None:
@@ -341,6 +380,7 @@ def main() -> None:
     check_embedded_schemas()
     sample, legacy_sample = check_saved_artifacts()
     check_validation(sample, legacy_sample)
+    check_v12_input_contract_is_frozen()
     check_discovery_target()
     check_evidence_compatibility()
     print("Capability contract checks passed.")

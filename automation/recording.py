@@ -12,8 +12,8 @@ from automation.capability import (
     RecordedLinkClick,
     TextTemplate,
 )
-from automation.policy import check_action, check_url
 from automation.evidence import ActionPurpose
+from automation.policy import RequestScope, check_action, check_url
 
 
 class RecordingError(Exception):
@@ -47,9 +47,10 @@ def record_action(
     page: Page,
     action: FillAction | ClickAction,
     inputs: MemberLookupInputs,
+    scope: RequestScope,
 ) -> RecordedFill | RecordedButtonClick | RecordedLinkClick:
-    check_url(page.url)
-    check_action(action)
+    check_url(page.url, scope)
+    check_action(action, scope)
 
     if isinstance(action, FillAction):
         if action.label != "Member ID" or action.value != inputs.member_id:
@@ -80,7 +81,7 @@ def record_action(
         raise RecordingError("Cannot record a link without a destination.")
 
     destination = urljoin(page.url, href)
-    check_url(destination)
+    check_url(destination, scope)
 
     parsed = urlsplit(destination)
 

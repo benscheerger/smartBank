@@ -36,7 +36,7 @@ The capability stores the reusable workflow rather than the model conversation.
 | `verifier` | Names the task-specific result check, `savings_balance_v1`. |
 | `steps` | Ordered actions and expected page paths. |
 
-The embedded schemas are generated from the Pydantic models. They include the required member-ID pattern, the three discriminated result variants, required recovery events, and the serialized string form of a balance. Version `1.3` loading checks both schemas against the current contracts. Version `1.2` loading uses frozen schema builders for its original contracts. Existing run-specific `1.1` and `1.2` artifacts remain unchanged on disk and are upgraded only in memory.
+The embedded schemas are generated from the Pydantic models. They include the required member-ID pattern, the three discriminated result variants, required recovery events, and the serialized string form of a balance. Version `1.3` loading checks both schemas against the current contracts. Version `1.2` loading checks a literal frozen input schema and frozen legacy output models, independently of current input-model changes. Existing run-specific `1.1` and `1.2` artifacts remain unchanged on disk and are upgraded only in memory.
 
 Fields are targeted by label, buttons by name, and replayed links by exact destination. Playwright rejects ambiguous targets instead of selecting an arbitrary match.
 
@@ -91,13 +91,13 @@ End-to-end tests exercise clean replay, automatic recovery, the missing-member o
 
 ## Safety
 
-A configurable policy restricts origins, paths, HTTP methods, action types, fields, and buttons. Link destinations are checked before execution. A browser request guard blocks disallowed intercepted requests and HTTP redirects, closes all WebSockets before they connect, and records each block through the existing policy-violation channel; job functions disable service workers.
+A configurable policy restricts origins, paths, HTTP methods, action types, fields, and buttons. Each job adds a request scope that permits only the exact member search, requested member details, and requested member’s savings account; custom policy files cannot broaden that scope. Entered member IDs and link destinations are checked before execution. A browser request guard blocks disallowed intercepted requests and HTTP redirects, closes all WebSockets before they connect, and records each block through the existing policy-violation channel; job functions disable service workers.
 
 The implemented banking task only reads account information. Configured risky button names take precedence over permitted button names. The policy test checks this behavior with a button named Transfer.
 
 Model-provided code is not executed. Human takeover retains the request guard, and Resume cannot override a policy violation.
 
-Saved JSONL logs omit prompts, raw observations, model response content, summaries, and entered values. Failure capture retains limited DOM structure and control counts without page text, field values, or raw attributes. Privacy tests check that named sensitive sentinel values are absent from replay and discovery failure fixtures. Terminal output includes proposed actions and the model summary.
+Saved JSONL logs omit prompts, raw observations, model response content, summaries, and entered values. Failure capture retains limited DOM structure and control counts without page text, field values, or raw attributes. Privacy tests check that named sensitive sentinel values are absent from replay and discovery failure fixtures. Terminal diagnostics contain only safe run metadata, redacted identifiers, and fixed action, purpose, status, recovery, and failure fields. Caller-facing results retain the verified banking output and model summary where intended; terminal diagnostics do not emit raw model, page, input, or verified banking content.
 
 Discovery supports loading the API key from outside the repository. Console requests use token, Host, and POST Origin checks, but there is no user-login system.
 

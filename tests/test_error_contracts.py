@@ -4,11 +4,16 @@ from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from playwright.sync_api import Page, Playwright, sync_playwright
 
-from automation.actions import FillAction, FinishAction, NextAction
+from automation.actions import (
+    ClickAction,
+    FillAction,
+    FinishAction,
+    NextAction,
+)
 from automation.capability import (
     Capability,
     LiteralText,
@@ -32,6 +37,7 @@ from automation.jobs import (
 )
 from automation.network import install_request_guard
 from automation.planner import ModelProposal
+from automation.policy import PolicyViolation, RequestScope
 from automation.replay import run_replay
 from automation.takeover_controls import ConsoleTakeover, TakeoverCommand
 from automation.verification import VerificationError
@@ -161,6 +167,8 @@ def run_replay_case(
     allow_human_takeover: bool = False,
     panel: Callable[[Page], PanelFactory] | None = None,
 ) -> tuple[Any, list[EvidenceEvent], FailureEvidence | None]:
+    scope = RequestScope(member_id=member_id)
+
     with DemoServer(
         dataset_id="members",
         notice_mode=notice_mode,
@@ -169,7 +177,7 @@ def run_replay_case(
 
         try:
             context = browser.new_context(service_workers="block")
-            blocked_requests = install_request_guard(context)
+            blocked_requests = install_request_guard(context, scope)
             page = context.new_page()
             page.set_default_timeout(2000)
 
@@ -184,6 +192,7 @@ def run_replay_case(
                     page=page,
                     capability=capability,
                     inputs=MemberLookupInputs(member_id=member_id),
+                    scope=scope,
                     blocked_requests=blocked_requests,
                     base_url=demo.url,
                     log=log,
@@ -377,7 +386,10 @@ def check_replay_contracts(
     require_terminal(mismatch_events, "run_failed")
 
 
-def proposal(action: FillAction | FinishAction, index: int) -> ModelProposal:
+def proposal(
+    action: FillAction | ClickAction | FinishAction,
+    index: int,
+) -> ModelProposal:
     return ModelProposal(
         request=NextAction(action=action),
         metadata=ModelCallMetadata(
@@ -395,6 +407,8 @@ def check_discovery_escalation(
     directory: Path,
 ) -> None:
     inputs = MemberLookupInputs(member_id="DEMO-101")
+    scope = RequestScope(member_id=inputs.member_id)
+    log_path: Path | None = None
     proposals = [
         proposal(
             FillAction(
@@ -421,7 +435,7 @@ def check_discovery_escalation(
 
         try:
             context = browser.new_context(service_workers="block")
-            blocked_requests = install_request_guard(context)
+            blocked_requests = install_request_guard(context, scope)
             page = context.new_page()
             page.goto(demo.url)
             original_context = page.context
@@ -441,6 +455,7 @@ def check_discovery_escalation(
                         page=page,
                         goal="Find the savings balance.",
                         inputs=inputs,
+                        scope=scope,
                         blocked_requests=blocked_requests,
                         log=log,
                         max_steps=8,
@@ -455,6 +470,7 @@ def check_discovery_escalation(
         finally:
             browser.close()
 
+    assert log_path is not None
     events = read_events(log_path)
     assert len(discovery.steps) == 8
     assert all(step.action.kind == "fill" for step in discovery.steps)
@@ -483,6 +499,7 @@ def check_discovery_resume_rejection(
     directory: Path,
 ) -> None:
     inputs = MemberLookupInputs(member_id="DEMO-101")
+    scope = RequestScope(member_id=inputs.member_id)
     first = proposal(
         FillAction(
             kind="fill",
@@ -498,7 +515,7 @@ def check_discovery_resume_rejection(
 
         try:
             context = browser.new_context(service_workers="block")
-            blocked_requests = install_request_guard(context)
+            blocked_requests = install_request_guard(context, scope)
             page = context.new_page()
             page.goto(demo.url)
 
@@ -520,6 +537,7 @@ def check_discovery_resume_rejection(
                             page=page,
                             goal="Find the savings balance.",
                             inputs=inputs,
+                            scope=scope,
                             blocked_requests=blocked_requests,
                             log=log,
                             max_steps=1,
@@ -555,6 +573,78 @@ def check_discovery_resume_rejection(
         and event.human_action.target == "search_button"
         for event in events
     )
+
+
+def check_discovery_scope_rejection(
+    playwright: Playwright,
+    directory: Path,
+) -> None:
+    inputs = MemberLookupInputs(member_id="DEMO-101")
+    scope = RequestScope(member_id=inputs.member_id)
+    log_path: Path | None = None
+    planner = Mock(
+        return_value=proposal(
+            ClickAction(
+                kind="click",
+                role="link",
+                name="Other member",
+            ),
+            1,
+        )
+    )
+
+    with DemoServer(dataset_id="members") as demo:
+        browser = playwright.chromium.launch(headless=True)
+
+        try:
+            context = browser.new_context(service_workers="block")
+            blocked_requests = install_request_guard(context, scope)
+            page = context.new_page()
+            page.goto(demo.url)
+            page.set_content(
+                '<a href="/members/DEMO-202">Other member</a>'
+            )
+
+            try:
+                with RunLog(
+                    directory=directory,
+                    mode="discovery",
+                    target_url=demo.url,
+                    dataset_id="members",
+                ) as log:
+                    log_path = log.path
+
+                    with patch(
+                        "automation.discovery.propose_action",
+                        planner,
+                    ):
+                        run_discovery(
+                            client=cast(Any, object()),
+                            page=page,
+                            goal="Find the savings balance.",
+                            inputs=inputs,
+                            scope=scope,
+                            blocked_requests=blocked_requests,
+                            log=log,
+                        )
+            except PolicyViolation:
+                pass
+            else:
+                raise AssertionError(
+                    "Discovery followed a wrong-member link."
+                )
+
+            assert planner.call_count == 1
+            assert page.url == demo.url
+            assert not blocked_requests
+
+        finally:
+            browser.close()
+
+    assert log_path is not None
+    events = read_events(log_path)
+    require_order(events, ["model_requested", "action_proposed", "run_failed"])
+    assert not any(event.event == "step_started" for event in events)
 
 
 def check_discovery_failure_capture(directory: Path) -> None:
@@ -628,12 +718,14 @@ def check_discovery_failure_capture(directory: Path) -> None:
 
 
 def check_websocket_policy(playwright: Playwright) -> None:
+    scope = RequestScope(member_id="DEMO-101")
+
     with DemoServer(dataset_id="members") as demo:
         browser = playwright.chromium.launch(headless=True)
 
         try:
             context = browser.new_context(service_workers="block")
-            blocked_requests = install_request_guard(context)
+            blocked_requests = install_request_guard(context, scope)
             page = context.new_page()
             page.goto(demo.url)
 
@@ -684,6 +776,7 @@ def main() -> None:
             check_replay_contracts(playwright, directory)
             check_discovery_escalation(playwright, directory)
             check_discovery_resume_rejection(playwright, directory)
+            check_discovery_scope_rejection(playwright, directory)
             check_websocket_policy(playwright)
 
         check_discovery_failure_capture(directory)
