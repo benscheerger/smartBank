@@ -14,7 +14,7 @@ An operator console provides discovery, replay, dataset selection, results, and 
 - **Reusable capabilities:** Saves verified workflows as versioned JSON files with self-contained input and output contracts.
 - **Replay:** Runs saved workflows with new inputs without model calls.
 - **Clear outcomes:** Separates success, missing-member results, and handled execution failures while reporting recovery events to the caller.
-- **Recovery and takeover:** Attempts one automatic notice dismissal, then allows bounded human repair during replay or discovery when enabled.
+- **Recovery and takeover:** Replay attempts one automatic notice dismissal before offering takeover. Discovery can request takeover after a timeout or decision limit.
 - **Operator console:** Provides one interface for running tasks and inspecting evidence.
 - **Policy and evidence:** Checks permitted actions and requests, blocks WebSockets, records action purposes and model-call metadata, and attempts structural failure capture.
 
@@ -45,7 +45,7 @@ The activation command is for macOS and Linux. Run later commands from the repos
 
 If `python` selects another installation, use `./.venv/bin/python` instead. Moving or renaming the repository may require recreating the virtual environment.
 
-The included `pyrightconfig.json` points Pyright and VS Code Pylance at this `.venv` and Python 3.11.
+The configuration sets Pyright’s environment and Python version. In VS Code, select `.venv/bin/python` as the interpreter.
 
 ### API configuration
 
@@ -104,7 +104,7 @@ evidence/capabilities/get_savings_balance_<run-id>.json
 
 It also updates `get_savings_balance.json`, the convenience alias for the latest successful recording.
 
-New recordings use capability schema `1.3`. Their embedded input and output JSON Schemas are generated from the runtime Pydantic models and validated when loaded. Existing `1.1` and `1.2` artifacts remain supported through an in-memory compatibility upgrade; the version `1.2` input schema is fixed independently of the current input model, its output contract uses frozen legacy models, and loading archived artifacts does not modify their files.
+New recordings use capability schema `1.3`. Their embedded input and output JSON Schemas are generated from the runtime Pydantic models and validated when loaded. Existing `1.1` and `1.2` artifacts remain supported through an in-memory compatibility upgrade; the version `1.2` input schema is fixed independently of the current input model, older artifacts are validated and converted in memory without changing their files. 
 
 ### Replay with another member
 
@@ -179,23 +179,21 @@ Known replay outcomes use these result types:
 
 `replay_capability` wraps those outcomes in a job result. A `replay_result`
 job contains one of the three capability outcomes above. A `job_failure`
-reports a capability-load, evidence, environment, or unexpected orchestration
-error with a safe code, stage, and exception type. Failures after logging starts
-retain their run ID and end with `run_failed`; pre-log failures use a null run ID.
+reports a capability-load, evidence, environment, or unexpected orchestration error with a safe code, stage, and exception type. Failures after logging starts retain their run ID. The logger attempts to record `run_failed`; pre-log failures use a null run ID.
 
 Clean runs return an empty `recovery_events` list. Notice handling records automatic recovery, human recovery, exhaustion, cancellation, or timeout. Terminal codes distinguish `recovery_exhausted`, `human_takeover_cancelled`, and `human_takeover_timed_out` from other hard failures.
 
-Outputs come from the displayed UI, separately from the model summary. Ordinary replay job exceptions are returned through the structured job-failure contract; process-control exceptions such as cancellation are not converted.
+Outputs come from the displayed UI, separately from the model summary. Ordinary replay job exceptions are returned through the structured job-failure contract; process-control exceptions such as `KeyboardInterrupt` and `SystemExit` are not converted.
 
 ### Saved evidence
 
 | Location | Contents |
 | --- | --- |
-| `evidence/capabilities/*.json` | Versioned workflows with reusable input/output contracts, recorded controls, and checkpoints. |
-| `evidence/runs/*.jsonl` | Discovery and replay events, including the target URL, verification, recovery, and handoff. |
-| `evidence/runs/*.failure.json` | Replay or discovery failure details and structural capture, or a marker that the snapshot was unavailable. |
+| `evidence/capabilities/*.json` | New capabilities contain versioned workflows, embedded input/output schemas, recorded controls, and checkpoints. |
+| `evidence/runs/*.jsonl` | New logs record discovery and replay events, including the target URL, verification, recovery, and handoff where applicable. |
+| `evidence/runs/*.failure.json` | Failure details and structural captures, or a marker that the snapshot was unavailable. |
 
-New run logs use evidence schema `1.2` and record the allowlisted target URL. Discovery action proposals include the provider, returned model name, response ID, and nullable input, output, and total token counts. Existing `1.0` and `1.1` logs remain supported and are not rewritten.
+New capabilities use schema `1.3`, and new logs use schema `1.2`. Archived capability versions `1.1` and `1.2` and log versions `1.0` and `1.1` remain supported without rewriting their files. Capability version `1.1` lacks embedded input/output schemas, and log version `1.0` lacks target URLs.
 
 Action-step events now include fixed purposes such as `enter_member_id` and `open_savings_account`. Verification, recovery, and selected handoff events also include purposes. These describe application-defined intent without storing model-generated reasoning. Older logs may have no purpose field.
 
@@ -246,6 +244,7 @@ Older artifacts and logs remain in place for compatibility checks and historical
 | `automation/takeover_controls.py` | Provides queued Resume and Cancel controls for console and CLI takeover. |
 | `automation/evidence.py` | Writes event logs and attempts structural failure capture. |
 | `automation/console.py` | Provides console endpoints, job queues, run state, and evidence access. |
+| `automation/terminal.py` | Formats safe terminal messages and handles command-line errors. |
 | `automation/__init__.py` | Marks the directory as a Python package. |
 
 ### Interfaces, demo, and configuration

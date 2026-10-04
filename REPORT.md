@@ -17,7 +17,7 @@ The request includes a target URL, but only the allowlisted local demo is accept
 | Discovery followed by replay | Saved workflows avoid repeated model decisions. | Replay still needs runtime checks. |
 | Synthetic demo | Known records and notices make tests reproducible. | It gives limited evidence for unfamiliar applications. |
 
-OpenAI was chosen because its Responses API returns the strict Pydantic `NextAction` type. The tested `gpt-6-luna` completed bounded discovery; replay does not use it. The prompt sends the goal and structural observation, treats page content as data, and permits only supported actions. Policy, execution, recording, and verification stay in code. Another provider can replace `propose_action` by returning the same `NextAction` and `ModelCallMetadata` contracts.
+OpenAI was chosen for its structured responses, which the Python SDK parses using the Pydantic `NextAction` model. The tested `gpt-6-luna` completed the implemented lookup; replay makes no model calls. The prompt supplies the goal and page observation and instructs the model to treat page content as data. Application code checks permissions, executes actions, records steps, and verifies results. Using another provider would require changes to the planner and provider metadata; execution and verification could remain separate.
 
 ## Artifact schema
 
@@ -32,7 +32,7 @@ The capability stores the reusable workflow rather than the model conversation.
 | `output_type`, `output_schema` | Success, business outcome, and failure contracts. |
 | `verifier` | Task-specific final result check. |
 
-The embedded schemas come from the Pydantic models. Strict loading rejects extra fields, invalid values, changed contracts, and unsupported versions. Older valid artifacts are upgraded in memory and are not rewritten; the README gives the version details.
+New capabilities include input and output JSON Schemas generated from Pydantic models. Pydantic validates the artifact fields, and the loader compares embedded schemas with the supported definitions. Unsupported versions are rejected. Older supported artifacts are converted in memory without changing their saved files.
 
 Fields are targeted by label, buttons by name, and links by exact destination. Playwright rejects ambiguous targets. Templates combine fixed text with input references, so a member link can reuse `member_id` without storing the original member’s name. These targets are easier to review than coordinates but still depend on compatible labels and routes.
 
@@ -40,7 +40,7 @@ Fields are targeted by label, buttons by name, and links by exact destination. P
 
 Replay resolves validated inputs into recorded actions. It does not ask the model to choose actions or repair failures. The action order stays fixed, although displayed data can change.
 
-Playwright waits for actionable controls and checks the expected path after each step. Final verification confirms the member and account, reads a finite balance, and requires a three-letter uppercase currency. This checks the UI separately from the model’s claim; it does not compare against an independent bank record.
+Playwright waits for actionable controls. Replay checks the expected path after each step. Final verification confirms the requested member and account, reads a finite numeric balance, and requires a three-letter uppercase currency. It checks the displayed UI separately from the model’s summary, without comparing against an independent bank record.
 
 | Condition | Response |
 | --- | --- |
@@ -49,35 +49,39 @@ Playwright waits for actionable controls and checks the expected path after each
 | Persistent supported notice | Request human takeover when enabled. |
 | Missing target, wrong checkpoint, policy violation, or failed verification | Stop with a structured failure. |
 
-Every replay result includes `recovery_events`. Notice handling records automatic recovery, human recovery, exhaustion, cancellation, or timeout. Specific codes keep those conditions separate from verification failures.
+Every `ReplayResult` includes a `recovery_events` list, which is empty when no recovery occurs. Notice handling records automatic recovery, human recovery, exhaustion, cancellation, or timeout. Failures use separate codes for recovery exhaustion, takeover cancellation, and takeover timeout.
 
-Handled UI failures stay inside the capability’s `ReplayResult`. A separate replay-job envelope returns either that result or a `job_failure` for loading, evidence, environment, or unexpected orchestration errors. Failures after logging starts keep the run ID and end with `run_failed`; earlier failures have no run ID. This leaves capability schema `1.3` unchanged.
+Handled replay failures return through `ReplayResult`. The job function returns either that result or a `job_failure` for problems loading the capability, writing evidence, starting or closing the environment, or running the job. Failures after logging starts retain their run ID. The logger attempts to record `run_failed`, but a logging error can prevent that event from being saved.
 
-Evidence records the target, actions, verification, recovery, handoff, and safe model-call metadata. It omits prompts, observations, response content, entered values, and reasoning. Failures attempt a bounded structural capture and record when it is unavailable.
+New evidence logs record the target, actions, verification, recovery, handoff, and model-call metadata. They omit prompts, raw observations, response content, entered values, and model reasoning. Handled replay failures and discovery failures with an available page attempt a limited structural capture. An unavailable snapshot is marked in the capture; if the file cannot be written, the logger attempts to record that failure evidence is unavailable.
 
 ## Heterogeneity & multi-tenant
 
-The implementation supports one web application. Datasets show record reuse, not vendor reuse. The artifact and executor are web-specific.
+The implementation supports one web application. Alternate datasets demonstrate reuse across records. Support for other applications and institutions remains future work.
 
-The proposed seam keeps logical steps in the artifact and moves surface work into an adapter. Each adapter would observe, resolve targets, act, check checkpoints, and read values. Modern web, legacy web, and desktop adapters could use labels, frames, accessibility controls, image matching, or OCR without changing the logical flow.
+I would separate the recorded workflow from application interaction through adapters. The workflow would use logical targets such as “member search field.” An adapter would read the application, find controls, perform actions, check progress, and extract values. Web adapters could use labels, roles, and frames. Desktop adapters could use operating-system accessibility controls or image-based targeting.
 
-Four versions would stay separate: artifact schema, workflow, adapter, and supported vendor application. Older artifacts without adapter metadata would migrate in memory to the smartBank web profile and stay unchanged on disk. A registry would select an adapter from the artifact and tenant settings. The surface kind, application family, and adapter major version must match; the newest compatible minor version would be used. No match would stop execution.
+I would track the artifact format, workflow, adapter, and supported application versions separately. The artifact and institution settings would select a compatible adapter. Execution would stop if none matched. Older artifacts could receive adapter information during loading without changing their saved files.
 
-Configuration would resolve in this order: shared vendor artifact, vendor-version control mapping, then tenant override. An override could change the entry URL, logical control mappings, or make policy narrower. It could not change inputs, outputs, step order, verification, or broaden permissions.
+Institutions using compatible versions of the same vendor application could share a workflow. Vendor control mappings would apply first, followed by institution-specific settings. These settings could change entry URLs, control mappings, or narrow permissions. They could not change inputs, outputs, step order, result checks, or broaden permissions.
 
-A preflight check would compare the vendor version, entry route, adapter version, and a small application signature made from required controls. Every logical target must resolve once. Replay would continue checking recorded checkpoints and stop on the first missing or ambiguous mapping. A control-only difference needs a mapping override. A changed screen sequence needs a new workflow version. A serialization-only change uses an artifact migration.
+Before execution, the system would check supported versions, the entry URL, and expected starting controls. At each step, a target would need exactly one matching control. Missing or ambiguous targets would stop execution. Changed controls could use updated mappings; changed screen sequences would require a new workflow version. Changes to the JSON format could be handled during loading.
 
 ## Escalation & handoff
 
-Human takeover handles a persistent service notice after automatic recovery is exhausted. Discovery can also request one handoff after its decision budget or an actionable-target timeout. Policy violations, model failures, and lost browser sessions stop instead.
+Replay can request human takeover when one automatic dismissal attempt cannot clear the known service notice. Discovery can request takeover after an action-target timeout or its initial eight-decision limit. Policy violations, model failures, and lost browser sessions stop execution instead.
 
-Automation pauses on the original browser page and context. The console shows the task, mode, reason, step, owner, timeout, and Resume and Cancel controls. Resume checks the same single-tab session, policy, member page, notice state, and pending control. Discovery also checks that the member input and workflow have not changed. A failed but repairable check leaves automation paused; an unsafe session stops the run.
+Automation pauses in the same browser session. The operator sees the live page, while the panel shows the task, mode, stop reason, step, owner, timeout, and Resume and Cancel controls.
 
-One takeover is allowed per run, with a 180-second timeout. Evidence records control transfers, rejected Resume requests, and categorized manual actions without values. Human actions are not saved in the capability.
+Replay Resume checks the original single-tab session, policy, requested member-details page, absence of the notice, and one actionable pending link. A repairable checkpoint rejection leaves replay paused.
+
+Discovery Resume checks the interrupted URL, unchanged member input, original single-tab session, and policy. Any previously visible notice must be cleared. Recorded manual actions outside the known notice controls are rejected. Failed Resume validation stops discovery; successful validation allows up to eight additional model decisions.
+
+One takeover is allowed per run, with a default timeout of 180 seconds. Cancellation, expiry, or loss of the required session stops the run. Evidence records control transfers, rejected Resume requests, and up to 100 categorized manual actions without entered values. Human actions are not added to the saved capability.
 
 ## Safety
 
-A configurable policy restricts origins, paths, methods, actions, fields, and buttons. Each job narrows it to the requested member and savings account; custom policy files cannot widen it. IDs and destinations are checked before execution.
+A configurable policy restricts origins, paths, request methods, actions, fields, and buttons. Each job also restricts navigation and entered values to the requested member and that member’s savings account. Custom policy files cannot bypass those member and account restrictions. IDs and destinations are checked before execution.
 
 A browser guard blocks disallowed requests, redirects, and WebSockets, and job functions disable service workers. Risky button names override permitted names. The demonstrated task only reads account information. Model-provided code is never executed. Human takeover keeps the request guard, and Resume cannot override a policy violation.
 
