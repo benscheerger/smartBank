@@ -3,6 +3,7 @@ import json
 from decimal import Decimal
 from typing import Any
 from unittest.mock import patch
+from automation.evidence import EvidenceEvent
 
 from playwright.sync_api import Page
 
@@ -130,6 +131,18 @@ def read_completed_log(
 
     if not events:
         raise AssertionError(f"Evidence log is empty: {run_id}")
+    
+    for event in events:
+        EvidenceEvent.model_validate(event)
+
+    # Older logs have no purpose field.
+    legacy_event = dict(events[0])
+    legacy_event.pop("purpose", None)
+
+    if EvidenceEvent.model_validate(legacy_event).purpose is not None:
+        raise AssertionError(
+            "An older event should default to purpose=None."
+        )
 
     if events[0]["event"] != "run_started":
         raise AssertionError("Missing initial run_started event.")
@@ -180,6 +193,85 @@ def require_event_order(
                 f"Missing or out-of-order event: {name}"
             ) from None
 
+def require_event_purpose(
+    events: list[dict[str, Any]],
+    event_name: str,
+    expected_purpose: str,
+) -> None:
+    matching = [
+        event for event in events
+        if event["event"] == event_name
+    ]
+
+    if not matching:
+        raise AssertionError(f"Missing event: {event_name}")
+
+    for event in matching:
+        if event.get("purpose") != expected_purpose:
+            raise AssertionError(
+                f"{event_name}: expected purpose "
+                f"{expected_purpose!r}, got "
+                f"{event.get('purpose')!r}."
+            )
+
+
+def require_action_purposes(
+    events: list[dict[str, Any]],
+    *,
+    completed_event: str,
+) -> None:
+    expected = [
+        "enter_member_id",
+        "submit_member_search",
+        "open_member_details",
+        "open_savings_account",
+    ]
+
+    started = [
+        event for event in events
+        if event["event"] == "step_started"
+    ]
+
+    if not started:
+        raise AssertionError("Missing action-start events.")
+
+    for event in started:
+        purpose = event.get("purpose")
+
+        if purpose not in expected:
+            raise AssertionError(
+                f"Step {event['step']} has an unexpected "
+                f"or missing purpose: {purpose!r}."
+            )
+
+        completed = [
+            candidate for candidate in events
+            if candidate["event"] == completed_event
+            and candidate["step"] == event["step"]
+        ]
+
+        if len(completed) != 1:
+            raise AssertionError(
+                f"Step {event['step']} needs exactly one "
+                f"{completed_event} event."
+            )
+
+        if completed[0].get("purpose") != purpose:
+            raise AssertionError(
+                f"Purpose changed during step {event['step']}."
+            )
+
+    # Require the main workflow in order, allowing repeated actions.
+    purposes = [event["purpose"] for event in started]
+    position = 0
+
+    for purpose in expected:
+        try:
+            position = purposes.index(purpose, position) + 1
+        except ValueError:
+            raise AssertionError(
+                f"Missing or out-of-order action purpose: {purpose}"
+            ) from None
 
 def check_balance(
     output: BalanceResult,
@@ -239,6 +331,21 @@ def check_replay(
         ],
     )
 
+    require_action_purposes(
+        events,
+        completed_event="checkpoint_passed",
+    )
+
+    for event_name in (
+        "verification_started",
+        "verification_passed",
+    ):
+        require_event_purpose(
+            events,
+            event_name,
+            "verify_account_result",
+        )
+
     return events
 
 
@@ -279,6 +386,33 @@ def main() -> None:
         )
 
         discovery_events = read_completed_log(discovery.run_id)
+
+        require_action_purposes(
+            discovery_events,
+            completed_event="step_completed",
+        )
+
+        for event_name in (
+            "verification_started",
+            "verification_passed",
+        ):
+            require_event_purpose(
+                discovery_events,
+                event_name,
+                "verify_account_result",
+            )
+
+        finish_events = [
+            event for event in discovery_events
+            if event["event"] == "action_proposed"
+            and event["action"] == "finish"
+        ]
+
+        require_event_purpose(
+            finish_events,
+            "action_proposed",
+            "report_observed_result",
+        )
 
         require_event_order(
             discovery_events,
@@ -348,6 +482,20 @@ def main() -> None:
         member_id=inputs.member_id,
         source_run_id=capability.source_run_id,
     )
+
+    for event_name, purpose in (
+        ("recovery_started", "dismiss_blocking_notice"),
+        ("recovery_exhausted", "dismiss_blocking_notice"),
+        ("handoff_started", "request_manual_repair"),
+        ("handoff_resume_rejected", "validate_resume_checkpoint"),
+        ("handoff_resumed", "resume_after_validation"),
+    ):
+        require_event_purpose(
+            takeover_events,
+            event_name,
+            purpose,
+        )
+    
 
     require_event_order(
         takeover_events,

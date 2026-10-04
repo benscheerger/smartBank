@@ -49,7 +49,11 @@ def recover_known_notice(
         return
 
     if budget.attempts >= budget.limit:
-        log.emit("recovery_exhausted", step=step)
+        log.emit(
+            "recovery_exhausted",
+            step=step,
+            purpose="dismiss_blocking_notice",
+        )
         raise RecoveryLimitExceeded("Recovery budget exhausted.")
 
     dismiss = notice.get_by_role(
@@ -62,7 +66,12 @@ def recover_known_notice(
         raise VerificationError("Notice has no unique dismissal control.")
 
     budget.attempts += 1
-    log.emit("recovery_started", step=step, action="click")
+    log.emit(
+        "recovery_started",
+        step=step,
+        action="click",
+        purpose="dismiss_blocking_notice",
+    )
 
     execute_action(
         page,
@@ -83,9 +92,19 @@ def recover_known_notice(
         if blocked_requests:
             raise PolicyViolation(blocked_requests[-1]) from error
 
-        log.emit("recovery_exhausted", step=step, action="click")
+        log.emit(
+            "recovery_exhausted",
+            step=step,
+            action="click",
+            purpose="dismiss_blocking_notice",
+        )
         raise RecoveryLimitExceeded(
             "The notice remained visible after dismissal."
         ) from error
 
-    log.emit("recovery_completed", step=step, action="click")
+    log.emit(
+        "recovery_completed",
+        step=step,
+        action="click",
+        purpose="dismiss_blocking_notice",
+    )

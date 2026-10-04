@@ -14,6 +14,8 @@ from playwright.sync_api import (
     TimeoutError as PlaywrightTimeoutError,
 )
 
+from automation.recording import recorded_action_purpose
+
 from automation.actions import (
     BrowserAction,
     ClickAction,
@@ -197,6 +199,7 @@ def run_replay(
         for index, step in enumerate(capability.steps, start=1):
             step_index = index
             action_kind = step.action.kind
+            purpose = recorded_action_purpose(step.action, inputs)
             current_action = None
             expected = (
                 f"Execute recorded {action_kind} action "
@@ -207,6 +210,7 @@ def run_replay(
                 "step_started",
                 step=index,
                 action=action_kind,
+                purpose=purpose,
             )
 
             action_kind = None
@@ -292,6 +296,7 @@ def run_replay(
                 "checkpoint_passed",
                 step=index,
                 action=action_kind,
+                purpose=purpose,
             )
 
             print(
@@ -340,7 +345,11 @@ def run_replay(
             "Verify the requested savings account and extract "
             "a finite balance and valid currency code."
         )
-        log.emit("verification_started")
+
+        log.emit(
+            "verification_started",
+            purpose="verify_account_result",
+        )
 
         result = verify_balance(
             page=page,
@@ -351,7 +360,10 @@ def run_replay(
         if blocked_requests:
             raise PolicyViolation(blocked_requests[-1])
 
-        log.emit("verification_passed")
+        log.emit(
+            "verification_passed",
+            purpose="verify_account_result",
+        )
         return ReplaySuccess(outputs=result)
 
     except (

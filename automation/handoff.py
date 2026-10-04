@@ -318,6 +318,7 @@ class HumanTakeover:
                 "handoff_started",
                 step=step,
                 action="click_link",
+                purpose="request_manual_repair",
             )
 
             try:
@@ -349,6 +350,7 @@ class HumanTakeover:
                         self.log.emit(
                             "handoff_timed_out",
                             step=step,
+                            purpose="stop_after_takeover_timeout",
                         )
                         raise HumanTakeoverTimedOut(
                             "Human takeover expired."
@@ -364,6 +366,7 @@ class HumanTakeover:
                         self.log.emit(
                             "handoff_cancelled",
                             step=step,
+                            purpose="stop_after_cancellation",
                         )
                         raise HumanTakeoverCancelled(
                             "The operator cancelled takeover."
@@ -384,6 +387,7 @@ class HumanTakeover:
                                 "handoff_resume_rejected",
                                 step=step,
                                 error_type=type(exc).__name__,
+                                purpose="validate_resume_checkpoint",
                             )
 
                             panel.set_status(
@@ -398,6 +402,7 @@ class HumanTakeover:
                         self.log.emit(
                             "handoff_resumed",
                             step=step,
+                            purpose="resume_after_validation",
                         )
 
                         panel.set_status(

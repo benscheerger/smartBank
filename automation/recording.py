@@ -13,6 +13,7 @@ from automation.capability import (
     TextTemplate,
 )
 from automation.policy import check_action, check_url
+from automation.evidence import ActionPurpose
 
 
 class RecordingError(Exception):
@@ -92,3 +93,28 @@ def record_action(
         kind="click_link",
         href=parameterize_path(parsed.path, inputs),
     )
+
+def recorded_action_purpose(
+    action: RecordedFill | RecordedButtonClick | RecordedLinkClick,
+    inputs: MemberLookupInputs,
+) -> ActionPurpose:
+    if isinstance(action, RecordedFill):
+        if action.label == "Member ID":
+            return "enter_member_id"
+
+    elif isinstance(action, RecordedButtonClick):
+        if action.name == "Search":
+            return "submit_member_search"
+
+    elif isinstance(action, RecordedLinkClick):
+        path = action.href.resolve(inputs)
+
+        if path == f"/members/{inputs.member_id}":
+            return "open_member_details"
+
+        if path == (
+            f"/members/{inputs.member_id}/accounts/savings"
+        ):
+            return "open_savings_account"
+
+    return "execute_recorded_step"

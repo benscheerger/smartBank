@@ -191,7 +191,10 @@ def discover_capability(
                             max_steps=8,
                         )
 
-                        log.emit("verification_started")
+                        log.emit(
+                            "verification_started",
+                            purpose="verify_account_result",
+                        )
 
                         result = verify_balance(
                             page=page,
@@ -200,11 +203,12 @@ def discover_capability(
                         )
 
                         if blocked_requests:
-                            raise PolicyViolation(
-                                blocked_requests[-1]
-                            )
+                            raise PolicyViolation(blocked_requests[-1])
 
-                        log.emit("verification_passed")
+                        log.emit(
+                            "verification_passed",
+                            purpose="verify_account_result",
+                        )
 
                         capability = Capability(
                             source_run_id=discovery.run_id,

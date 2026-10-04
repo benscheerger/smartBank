@@ -131,6 +131,8 @@ __pypackages__/
 celerybeat-schedule
 celerybeat.pid
 
+/DECISIONS.md
+
 # Redis
 *.rdb
 *.aof
@@ -152,7 +154,7 @@ activemq-data/
 .envrc
 .venv
 .venv-check
-venv-check/
+venv-check
 env/
 venv/
 ENV/

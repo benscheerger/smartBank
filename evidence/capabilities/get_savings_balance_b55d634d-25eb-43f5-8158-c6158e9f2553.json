@@ -1,7 +1,7 @@
 {
   "schema_version": "1.1",
   "name": "get_savings_balance",
-  "source_run_id": "40ee2080-65d0-453a-bf70-ab07e535c2d4",
+  "source_run_id": "b55d634d-25eb-43f5-8158-c6158e9f2553",
   "start_path": "/",
   "input_type": "MemberLookupInputs",
   "output_type": "ReplayResult",

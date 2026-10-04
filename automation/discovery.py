@@ -15,7 +15,11 @@ from automation.executor import execute_action
 from automation.observation import observe_page
 from automation.planner import propose_action
 from automation.policy import PolicyViolation, check_url
-from automation.recording import parameterize_path, record_action
+from automation.recording import (
+    parameterize_path,
+    record_action,
+    recorded_action_purpose,
+)
 
 
 @dataclass
@@ -59,6 +63,11 @@ def run_discovery(
             "action_proposed",
             step=step,
             action=action.kind,
+            purpose=(
+                "report_observed_result"
+                if isinstance(action, FinishAction)
+                else None
+            ),
         )
 
         print(f"\nStep {step}/{max_steps}")
@@ -71,17 +80,18 @@ def run_discovery(
                 steps=recorded_steps,
             )
         
+        # Validate and capture the target before execution.
+        recorded_action = record_action(page, action, inputs)
+        purpose = recorded_action_purpose(recorded_action, inputs)
+
         log.emit(
             "step_started",
             step=step,
             action=action.kind,
+            purpose=purpose,
         )
 
-        # Capture the target while we are still on the original page.
-        recorded_action = record_action(page, action, inputs)
-
         execute_action(page, action)
-
         # Observe the actual state reached after execution.
         after = observe_page(page)
 
@@ -108,6 +118,7 @@ def run_discovery(
             "step_completed",
             step=step,
             action=action.kind,
+            purpose=purpose,
         )
 
     raise RuntimeError(

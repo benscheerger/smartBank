@@ -47,6 +47,22 @@ ActionKind = Literal[
     "finish",
 ]
 
+ActionPurpose = Literal[
+    "enter_member_id",
+    "submit_member_search",
+    "open_member_details",
+    "open_savings_account",
+    "report_observed_result",
+    "execute_recorded_step",
+    "dismiss_blocking_notice",
+    "request_manual_repair",
+    "validate_resume_checkpoint",
+    "resume_after_validation",
+    "stop_after_cancellation",
+    "stop_after_takeover_timeout",
+    "verify_account_result",
+]
+
 
 class HumanAction(StrictModel):
     kind: Literal["click", "input", "change"]
@@ -73,6 +89,7 @@ class EvidenceEvent(StrictModel):
     error_type: str | None
     human_action: HumanAction | None = None
     dataset_id: str | None = None
+    purpose: ActionPurpose | None = None
 
 
 class RunLog:
@@ -116,6 +133,7 @@ class RunLog:
         action: ActionKind | None = None,
         error_type: str | None = None,
         human_action: HumanAction | None = None,
+        purpose: ActionPurpose | None = None,
     ) -> None:
         if self._file is None or self._file.closed:
             raise RuntimeError("The evidence log is not open.")
@@ -135,6 +153,7 @@ class RunLog:
             error_type=error_type,
             human_action=human_action,
             dataset_id=self.dataset_id,
+            purpose=purpose,
         )
 
         self._file.write(entry.model_dump_json() + "\n")
