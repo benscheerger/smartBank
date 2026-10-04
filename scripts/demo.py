@@ -8,7 +8,7 @@ from automation.jobs import (
 )
 from automation.terminal import (
     discovery_result_lines,
-    replay_result_lines,
+    replay_job_result_lines,
     run_cli,
 )
 from demo_app.server import DemoServer
@@ -45,10 +45,13 @@ def main() -> None:
         allow_human_takeover=False,
     )
 
-    for line in replay_result_lines(replay.replay_result):
+    for line in replay_job_result_lines(replay):
         print(line)
 
-    if replay.replay_result.status != "success":
+    if (
+        replay.kind == "job_failure"
+        or replay.replay_result.status != "success"
+    ):
         raise SystemExit(1)
 
 

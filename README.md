@@ -177,9 +177,15 @@ Known replay outcomes use these result types:
 | `business_outcome` | The supported missing-member outcome was detected: `member_not_found`, with any recovery events. |
 | `failure` | Replay stopped with a code, step when available, expected condition, safe observations, error type, and recovery events. |
 
+`replay_capability` wraps those outcomes in a job result. A `replay_result`
+job contains one of the three capability outcomes above. A `job_failure`
+reports a capability-load, evidence, environment, or unexpected orchestration
+error with a safe code, stage, and exception type. Failures after logging starts
+retain their run ID and end with `run_failed`; pre-log failures use a null run ID.
+
 Clean runs return an empty `recovery_events` list. Notice handling records automatic recovery, human recovery, exhaustion, cancellation, or timeout. Terminal codes distinguish `recovery_exhausted`, `human_takeover_cancelled`, and `human_takeover_timed_out` from other hard failures.
 
-Outputs come from the displayed UI, separately from the model summary. Setup and other unexpected exceptions can propagate from job functions; the console catches them and marks the run as failed.
+Outputs come from the displayed UI, separately from the model summary. Ordinary replay job exceptions are returned through the structured job-failure contract; process-control exceptions such as cancellation are not converted.
 
 ### Saved evidence
 

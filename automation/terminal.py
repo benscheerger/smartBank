@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import sys
 from collections.abc import Callable
-from typing import Never
+from typing import TYPE_CHECKING, Never
 from urllib.parse import urlsplit
 
 from automation.evidence import (
@@ -13,6 +15,9 @@ from automation.results import (
     ReplayFailure,
     ReplaySuccess,
 )
+
+if TYPE_CHECKING:
+    from automation.jobs import ReplayJobResult
 
 REDACTED = "[redacted]"
 
@@ -67,6 +72,20 @@ def replay_result_lines(
     )
     lines.append(f"Recovery outcomes: {outcomes or 'none'}")
     return tuple(lines)
+
+
+def replay_job_result_lines(
+    result: ReplayJobResult,
+) -> tuple[str, ...]:
+    if result.kind == "job_failure":
+        return (
+            "Replay job status: failure",
+            f"Failure code: {result.code}",
+            f"Failure stage: {result.stage}",
+            f"Error type: {result.error_type}",
+        )
+
+    return replay_result_lines(result.replay_result)
 
 
 def model_call_lines(

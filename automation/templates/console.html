@@ -451,9 +451,13 @@
             state.run_id ? `Run: ${state.run_id}` : "";
 
         const isReplay = state.mode === "replay";
-        const outcome = isReplay
+        const jobFailure = isReplay &&
+            state.result?.kind === "job_failure"
+                ? state.result
+                : null;
+        const outcome = jobFailure || (isReplay
             ? state.result?.replay_result
-            : state.result;
+            : state.result);
 
         document.getElementById("response-heading").textContent =
             isReplay ? "Replay response" : "Agent response";
@@ -462,7 +466,11 @@
             "No response yet.";
 
         if (isReplay && outcome) {
-            if (outcome.status === "success") {
+            if (jobFailure) {
+                response =
+                    `Replay job failed during ${jobFailure.stage}: ` +
+                    `${jobFailure.code}.`;
+            } else if (outcome.status === "success") {
                 const output = outcome.outputs;
 
                 response =

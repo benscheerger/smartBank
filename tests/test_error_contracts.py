@@ -34,6 +34,7 @@ from automation.jobs import (
     DiscoveryTask,
     discover_capability,
     load_saved_capability,
+    replay_capability,
 )
 from automation.network import install_request_guard
 from automation.planner import ModelProposal
@@ -41,7 +42,7 @@ from automation.policy import PolicyViolation, RequestScope
 from automation.replay import run_replay
 from automation.takeover_controls import ConsoleTakeover, TakeoverCommand
 from automation.verification import VerificationError
-from demo_app.server import DemoServer
+from demo_app.server import DemoServer, DemoServerStartError
 
 
 PanelFactory = Callable[..., ConsoleTakeover]
@@ -384,6 +385,94 @@ def check_replay_contracts(
         ["step_started", "failure_evidence_saved", "run_failed"],
     )
     require_terminal(mismatch_events, "run_failed")
+
+
+def check_replay_job_contracts(directory: Path) -> None:
+    inputs = MemberLookupInputs(member_id="DEMO-202")
+    private_message = "PRIVATE_JOB_EXCEPTION_MESSAGE"
+
+    with patch(
+        "automation.jobs.load_saved_capability",
+        side_effect=ValueError(private_message),
+    ):
+        load_failure = replay_capability(
+            inputs,
+            dataset_id="members",
+            capability_id="missing-capability",
+        )
+
+    assert load_failure.kind == "job_failure"
+    assert load_failure.code == "capability_load_failed"
+    assert load_failure.stage == "capability_load"
+    assert load_failure.run_id is None
+    assert private_message not in load_failure.model_dump_json()
+
+    with patch(
+        "automation.jobs.RunLog.__enter__",
+        side_effect=OSError(private_message),
+    ):
+        evidence_failure = replay_capability(
+            inputs,
+            dataset_id="members",
+            capability_id="get_savings_balance",
+        )
+
+    assert evidence_failure.kind == "job_failure"
+    assert evidence_failure.code == "evidence_failed"
+    assert evidence_failure.stage == "evidence"
+    assert evidence_failure.run_id is None
+    assert private_message not in evidence_failure.model_dump_json()
+
+    run_directory = directory / "evidence" / "runs"
+
+    with (
+        patch("automation.jobs.PROJECT_ROOT", directory),
+        patch.object(
+            DemoServer,
+            "__enter__",
+            side_effect=DemoServerStartError(private_message),
+        ),
+    ):
+        environment_failure = replay_capability(
+            inputs,
+            dataset_id="members",
+            capability_id="get_savings_balance",
+        )
+
+    assert environment_failure.kind == "job_failure"
+    assert environment_failure.code == "environment_failed"
+    assert environment_failure.stage == "environment"
+    assert environment_failure.run_id is not None
+    assert private_message not in environment_failure.model_dump_json()
+
+    environment_events = read_events(
+        run_directory / f"{environment_failure.run_id}.jsonl"
+    )
+    require_terminal(environment_events, "run_failed")
+
+    with (
+        patch("automation.jobs.PROJECT_ROOT", directory),
+        patch(
+            "automation.jobs.run_replay",
+            side_effect=RuntimeError(private_message),
+        ),
+    ):
+        unexpected_failure = replay_capability(
+            inputs,
+            dataset_id="members",
+            capability_id="get_savings_balance",
+        )
+
+    assert unexpected_failure.kind == "job_failure"
+    assert unexpected_failure.code == "unexpected_job_error"
+    assert unexpected_failure.stage == "replay"
+    assert unexpected_failure.run_id is not None
+    assert private_message not in unexpected_failure.model_dump_json()
+
+    unexpected_events = read_events(
+        run_directory / f"{unexpected_failure.run_id}.jsonl"
+    )
+    require_terminal(unexpected_events, "run_failed")
 
 
 def proposal(
@@ -779,6 +868,7 @@ def main() -> None:
             check_discovery_scope_rejection(playwright, directory)
             check_websocket_policy(playwright)
 
+        check_replay_job_contracts(directory)
         check_discovery_failure_capture(directory)
 
     print("Recovery, escalation, and evidence contract checks passed.")

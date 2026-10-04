@@ -318,6 +318,12 @@ def check_replay(
     member_id: str,
     source_run_id: str,
 ) -> list[dict[str, Any]]:
+    if job.kind == "job_failure":
+        raise AssertionError(
+            "Replay job failed before returning a replay result:\n"
+            + job.model_dump_json(indent=2)
+        )
+
     result = job.replay_result
 
     if result.status != "success":
@@ -470,6 +476,8 @@ def main() -> None:
         source_run_id=capability.source_run_id,
     )
 
+    assert normal_replay.kind == "replay_result"
+
     if any(
         event["event"] == "handoff_started"
         for event in normal_events
@@ -502,6 +510,8 @@ def main() -> None:
         member_id=inputs.member_id,
         source_run_id=capability.source_run_id,
     )
+
+    assert takeover_replay.kind == "replay_result"
 
     if [
         event.outcome

@@ -290,7 +290,21 @@ class ConsoleController:
                         notice_mode=job.notice_mode,
                         allow_human_takeover=job.allow_human_takeover,
                         panel_factory=self._make_takeover_panel,
-)
+                    )
+
+                    if replay_job_result.kind == "job_failure":
+                        self._update(
+                            status="failure",
+                            message=(
+                                "Replay setup or orchestration failed. "
+                                "Review the structured job failure."
+                            ),
+                            result=replay_job_result.model_dump(
+                                mode="json"
+                            ),
+                            error_type=replay_job_result.error_type,
+                        )
+                        continue
 
                     status = (
                         replay_job_result.replay_result.status

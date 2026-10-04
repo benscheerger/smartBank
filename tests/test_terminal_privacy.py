@@ -18,7 +18,11 @@ from automation.actions import (
 from automation.capability import MemberLookupInputs
 from automation.discovery import run_discovery
 from automation.evidence import ModelCallMetadata, RunLog
-from automation.jobs import replay_capability
+from automation.jobs import (
+    ReplayJobCompleted,
+    ReplayJobFailure,
+    replay_capability,
+)
 from automation.network import install_request_guard
 from automation.planner import ModelProposal
 from automation.policy import RequestScope
@@ -33,6 +37,7 @@ from automation.terminal import (
     exception_line,
     observation_lines,
     proposal_lines,
+    replay_job_result_lines,
     replay_result_lines,
     run_cli,
 )
@@ -93,6 +98,22 @@ def check_formatter_contract() -> None:
         error_type="VerificationError",
         recovery_events=[],
     )
+    completed_job = ReplayJobCompleted(
+        run_id="safe-run-id",
+        dataset_id="members",
+        capability_id="safe-capability-id",
+        replay_result=success,
+    )
+    failed_job = ReplayJobFailure(
+        run_id=None,
+        dataset_id="members",
+        capability_id="safe-capability-id",
+        code="capability_load_failed",
+        stage="capability_load",
+        expected=MODEL_SUMMARY,
+        observed=EXCEPTION_MESSAGE,
+        error_type="RuntimeError",
+    )
 
     rendered = "\n".join(
         (
@@ -104,6 +125,8 @@ def check_formatter_contract() -> None:
             *replay_result_lines(success),
             *replay_result_lines(business),
             *replay_result_lines(failure),
+            *replay_job_result_lines(completed_job),
+            *replay_job_result_lines(failed_job),
             *proposal_lines(
                 action="fill",
                 metadata=ModelCallMetadata(
@@ -138,6 +161,7 @@ def check_formatter_contract() -> None:
     assert "Action: fill" in rendered
     assert "Page kind: account_details" in rendered
     assert "Failed: RuntimeError" in rendered
+    assert "Failure stage: capability_load" in rendered
 
     stdout = io.StringIO()
     stderr = io.StringIO()
@@ -276,6 +300,7 @@ def check_replay_output(directory: Path) -> None:
             allow_human_takeover=False,
         )
 
+    assert result.kind == "replay_result"
     assert result.replay_result.status == "success"
     rendered = stdout.getvalue() + stderr.getvalue()
     require_absent(
@@ -288,6 +313,33 @@ def check_replay_output(directory: Path) -> None:
     assert f"Member: {REDACTED}" in rendered
     assert "purpose=enter_member_id" in rendered
     assert "purpose=open_savings_account" in rendered
+
+
+def check_job_failure_privacy() -> None:
+    with patch(
+        "automation.jobs.load_saved_capability",
+        side_effect=RuntimeError(EXCEPTION_MESSAGE),
+    ):
+        result = replay_capability(
+            MemberLookupInputs(member_id=MEMBER_ID),
+            dataset_id="members",
+            capability_id="get_savings_balance",
+        )
+
+    assert result.kind == "job_failure"
+    assert result.code == "capability_load_failed"
+    assert result.run_id is None
+
+    rendered = result.model_dump_json() + "\n" + "\n".join(
+        replay_job_result_lines(result)
+    )
+    require_absent(
+        rendered,
+        MEMBER_ID,
+        BALANCE,
+        MODEL_SUMMARY,
+        EXCEPTION_MESSAGE,
+    )
 
 
 def check_print_sources() -> None:
@@ -336,6 +388,7 @@ def check_print_sources() -> None:
 def main() -> None:
     check_formatter_contract()
     check_print_sources()
+    check_job_failure_privacy()
 
     with TemporaryDirectory() as temporary_directory:
         directory = Path(temporary_directory)

@@ -1,7 +1,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -81,11 +81,46 @@ class DiscoveryJobResult(StrictModel):
     outputs: BalanceResult
 
 
-class ReplayJobResult(StrictModel):
+class ReplayJobCompleted(StrictModel):
+    kind: Literal["replay_result"] = "replay_result"
     run_id: str
     dataset_id: str
     capability_id: str
     replay_result: ReplayResult
+
+
+ReplayJobFailureCode = Literal[
+    "capability_load_failed",
+    "evidence_failed",
+    "environment_failed",
+    "unexpected_job_error",
+]
+
+ReplayJobStage = Literal[
+    "capability_load",
+    "evidence",
+    "run_start_callback",
+    "environment",
+    "replay",
+]
+
+
+class ReplayJobFailure(StrictModel):
+    kind: Literal["job_failure"] = "job_failure"
+    run_id: str | None
+    dataset_id: str
+    capability_id: str
+    code: ReplayJobFailureCode
+    stage: ReplayJobStage
+    expected: str
+    observed: str
+    error_type: str
+
+
+ReplayJobResult = Annotated[
+    ReplayJobCompleted | ReplayJobFailure,
+    Field(discriminator="kind"),
+]
 
 
 def capability_paths() -> dict[str, Path]:
@@ -408,6 +443,43 @@ def _discovery_failure(
     )
 
 
+def _replay_job_failure(
+    *,
+    error: Exception,
+    stage: ReplayJobStage,
+    run_id: str | None,
+    dataset_id: str,
+    capability_id: str,
+) -> ReplayJobFailure:
+    if stage == "capability_load":
+        code: ReplayJobFailureCode = "capability_load_failed"
+        expected = "Load and validate the requested saved capability."
+        observed = "The saved capability could not be loaded."
+    elif stage == "evidence":
+        code = "evidence_failed"
+        expected = "Create and finalize the replay evidence log."
+        observed = "Replay evidence logging failed."
+    elif stage == "environment":
+        code = "environment_failed"
+        expected = "Start and close the demo and browser environment."
+        observed = "The replay environment failed."
+    else:
+        code = "unexpected_job_error"
+        expected = "Return a structured deterministic replay result."
+        observed = "Replay orchestration raised an unexpected error."
+
+    return ReplayJobFailure(
+        run_id=run_id,
+        dataset_id=dataset_id,
+        capability_id=capability_id,
+        code=code,
+        stage=stage,
+        expected=expected,
+        observed=observed,
+        error_type=type(error).__name__,
+    )
+
+
 def replay_capability(
     inputs: MemberLookupInputs,
     *,
@@ -418,68 +490,100 @@ def replay_capability(
     allow_human_takeover: bool = False,
     panel_factory: TakeoverPanelFactory | None = None,
 ) -> ReplayJobResult:
-    capability = load_saved_capability(capability_id)
-    scope = RequestScope(
-        member_id=inputs.member_id,
-        account_type="savings",
-    )
+    stage: ReplayJobStage = "capability_load"
+    run_id = None
 
-    with RunLog(
-        directory=PROJECT_ROOT / "evidence" / "runs",
-        mode="replay",
-        target_url=DemoServer.url,
-        source_run_id=capability.source_run_id,
-        dataset_id=dataset_id,
-    ) as log:
-        if on_run_started is not None:
-            on_run_started(log.run_id)
+    try:
+        capability = load_saved_capability(capability_id)
+        scope = RequestScope(
+            member_id=inputs.member_id,
+            account_type="savings",
+        )
 
-        print(f"Evidence log: {log.path}")
-        print(f"Replaying: {capability.name}")
-        print(f"Target: {DemoServer.url}")
-        print(f"Dataset: {dataset_id}")
-        print(redacted_member())
+        stage = "evidence"
 
-        with DemoServer(
+        with RunLog(
+            directory=PROJECT_ROOT / "evidence" / "runs",
+            mode="replay",
+            target_url=DemoServer.url,
+            source_run_id=capability.source_run_id,
             dataset_id=dataset_id,
-            notice_mode=notice_mode,
-        ) as demo:
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(
-                    headless=False,
-                    slow_mo=300,
-                )
+        ) as log:
+            run_id = log.run_id
 
-                try:
-                    context = browser.new_context(
-                        service_workers="block"
+            if on_run_started is not None:
+                stage = "run_start_callback"
+                on_run_started(run_id)
+
+            print(f"Evidence log: {log.path}")
+            print(f"Replaying: {capability.name}")
+            print(f"Target: {DemoServer.url}")
+            print(f"Dataset: {dataset_id}")
+            print(redacted_member())
+
+            stage = "environment"
+
+            with DemoServer(
+                dataset_id=dataset_id,
+                notice_mode=notice_mode,
+            ) as demo:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(
+                        headless=False,
+                        slow_mo=300,
                     )
-                    blocked_requests = install_request_guard(
-                        context,
-                        scope,
-                    )
+                    replay_raised = False
 
-                    page = context.new_page()
-                    page.set_default_timeout(5000)
+                    try:
+                        context = browser.new_context(
+                            service_workers="block"
+                        )
+                        blocked_requests = install_request_guard(
+                            context,
+                            scope,
+                        )
 
-                    result = run_replay(
-                        page=page,
-                        capability=capability,
-                        inputs=inputs,
-                        scope=scope,
-                        blocked_requests=blocked_requests,
-                        base_url=demo.url,
-                        log=log,
-                        allow_human_takeover=allow_human_takeover,
-                        panel_factory=panel_factory,
-                    )
+                        page = context.new_page()
+                        page.set_default_timeout(5000)
+                        stage = "replay"
 
-                    return ReplayJobResult(
-                        run_id=log.run_id,
-                        dataset_id=dataset_id,
-                        capability_id=capability_id,
-                        replay_result=result,
-                    )
+                        result = run_replay(
+                            page=page,
+                            capability=capability,
+                            inputs=inputs,
+                            scope=scope,
+                            blocked_requests=blocked_requests,
+                            base_url=demo.url,
+                            log=log,
+                            allow_human_takeover=allow_human_takeover,
+                            panel_factory=panel_factory,
+                        )
 
-                finally:
-                    browser.close()
+                    except BaseException:
+                        replay_raised = True
+                        raise
+
+                    finally:
+                        stage = "environment"
+                        browser.close()
+
+                        if replay_raised:
+                            stage = "replay"
+
+            completed = ReplayJobCompleted(
+                run_id=run_id,
+                dataset_id=dataset_id,
+                capability_id=capability_id,
+                replay_result=result,
+            )
+            stage = "evidence"
+            return completed
+
+    except Exception as error:
+        return _replay_job_failure(
+            error=error,
+            stage=stage,
+            run_id=run_id,
+            dataset_id=dataset_id,
+            capability_id=capability_id,
+        )
