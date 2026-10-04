@@ -7,12 +7,15 @@ from werkzeug.serving import BaseWSGIServer, make_server
 from demo_app.app import create_app
 
 
+DemoTargetUrl = Literal["http://127.0.0.1:8000/"]
+
+
 class DemoServerStartError(RuntimeError):
     pass
 
 
 class DemoServer:
-    url = "http://127.0.0.1:8000/"
+    url: DemoTargetUrl = "http://127.0.0.1:8000/"
 
     def __init__(
         self,

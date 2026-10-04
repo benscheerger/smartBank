@@ -1,0 +1,11 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "include": [
+    "automation",
+    "demo_app",
+    "scripts",
+    "tests"
+  ]
+}

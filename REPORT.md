@@ -6,6 +6,8 @@ smartBank retrieves a member’s available savings balance and currency from a l
 
 Discovery follows an observe → decide → act loop. Playwright reads the page, the model proposes a typed action, and application code checks policy before executing it. Discovery is limited to eight model decisions. Separate UI verification must succeed before the recorded workflow becomes a reusable capability.
 
+The discovery request includes an explicit target URL. The implementation accepts only the allowlisted local smartBank demo URL and uses that value for policy validation and initial navigation; it does not accept arbitrary web targets.
+
 Replay follows the saved workflow without model calls. The Flask operator console uses shared discovery and replay functions. HTTP handlers queue commands; the thread controlling the browser performs Playwright operations.
 
 | Decision | Reason | Tradeoff |
@@ -23,22 +25,24 @@ The capability stores the reusable workflow rather than the model conversation.
 
 | Field | Purpose |
 | --- | --- |
-| `schema_version` | Format version, currently `1.1`. |
+| `schema_version` | Format version. New recordings use `1.2`; the loader upgrades valid `1.1` artifacts in memory. |
 | `name` | Supported task: `get_savings_balance`. |
 | `source_run_id` | Discovery run that created it. |
 | `start_path` | Entry path, currently `/`. |
 | `input_type` | Names `MemberLookupInputs`, which validates the member ID. |
+| `input_schema` | Embeds the complete JSON Schema for replay inputs. |
 | `output_type` | Names `ReplayResult`, covering success, a business outcome, or failure. |
+| `output_schema` | Embeds the serialization JSON Schema for all replay result variants. |
 | `verifier` | Names the task-specific result check, `savings_balance_v1`. |
 | `steps` | Ordered actions and expected page paths. |
 
-The type and verifier names refer to definitions in application code; the artifact does not embed their full definitions.
+The embedded schemas are generated from the Pydantic models. They include the required member-ID pattern, the three discriminated result variants, and the serialized string form of a balance. Version `1.2` loading checks that both schemas exactly match the supported contracts. Existing run-specific capability artifacts using version `1.1` remain unchanged on disk and receive those definitions only in memory.
 
 Fields are targeted by label, buttons by name, and replayed links by exact destination. Playwright rejects ambiguous targets instead of selecting an arbitrary match.
 
 Templates combine fixed text with input references. A member link contains `/members/` plus `member_id`, allowing reuse without storing the original member’s name. These targets are easier to review than coordinates but depend on compatible labels and routes.
 
-Strict schemas reject unexpected fields, invalid constrained values, and explicitly unsupported versions. The saved-artifact loader also requires version and output-type metadata.
+Strict schemas reject unexpected fields, invalid constrained values, altered embedded contracts, and explicitly unsupported versions.
 
 ## Determinism & error handling
 
@@ -55,7 +59,7 @@ Playwright waits for actionable controls within configured timeouts. Path checkp
 
 Handled replay failures include the step when available, the expected condition, safe observations, and the error type. Other exceptions propagate to the caller; the console catches them and displays a failed run.
 
-Saved events record execution, verification, recovery, and handoff. Action events include fixed purpose labels, such as `open_member_details`, to explain their intent without storing member details or model-generated reasoning. Replay attempts to capture a bounded structural snapshot on failure and records when capture or writing is unavailable.
+Saved events record the target URL, execution, verification, recovery, and handoff. New logs use evidence schema `1.1`; archived `1.0` logs remain readable without modification. Action events include fixed purpose labels, such as `open_member_details`, to explain their intent without storing member details or model-generated reasoning. Replay attempts to capture a bounded structural snapshot on failure and records when capture or writing is unavailable.
 
 ## Heterogeneity & multi-tenant
 

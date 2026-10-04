@@ -57,6 +57,7 @@ def main() -> None:
 
     # These tests do not require the demo server.
     for module in (
+        "tests.test_capabilities",
         "tests.test_policy",
         "tests.test_failure_evidence",
     ):

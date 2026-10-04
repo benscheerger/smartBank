@@ -1,5 +1,6 @@
 from automation.capability import MemberLookupInputs
 from automation.jobs import DiscoveryTask, discover_capability
+from demo_app.server import DemoServer
 
 
 def main():
@@ -8,6 +9,7 @@ def main():
             "Find the requested member's available "
             "savings balance and currency."
         ),
+        target_url=DemoServer.url,
         inputs=MemberLookupInputs(
             member_id="DEMO-101",
         ),

@@ -1,8 +1,13 @@
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import Field
+from pydantic import Field, TypeAdapter, model_validator
 
 from automation.actions import StrictModel
+from automation.results import ReplayResult
+
+
+CAPABILITY_SCHEMA_VERSION: Literal["1.2"] = "1.2"
+JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
 
 class MemberLookupInputs(StrictModel):
@@ -71,7 +76,29 @@ class CapabilityStep(StrictModel):
     checkpoint: PageCheckpoint
 
 
-class Capability(StrictModel):
+def build_input_schema() -> dict[str, Any]:
+    return {
+        "$schema": JSON_SCHEMA_DIALECT,
+        "$id": (
+            "urn:smartbank:get_savings_balance:"
+            f"{CAPABILITY_SCHEMA_VERSION}:inputs"
+        ),
+        **MemberLookupInputs.model_json_schema(mode="validation"),
+    }
+
+
+def build_output_schema() -> dict[str, Any]:
+    return {
+        "$schema": JSON_SCHEMA_DIALECT,
+        "$id": (
+            "urn:smartbank:get_savings_balance:"
+            f"{CAPABILITY_SCHEMA_VERSION}:outputs"
+        ),
+        **TypeAdapter(ReplayResult).json_schema(mode="serialization"),
+    }
+
+
+class _LegacyCapability(StrictModel):
     schema_version: Literal["1.1"] = "1.1"
     name: Literal["get_savings_balance"] = "get_savings_balance"
 
@@ -83,3 +110,68 @@ class Capability(StrictModel):
     verifier: Literal["savings_balance_v1"] = "savings_balance_v1"
 
     steps: list[CapabilityStep] = Field(min_length=1)
+
+
+class Capability(StrictModel):
+    schema_version: Literal["1.2"] = CAPABILITY_SCHEMA_VERSION
+    name: Literal["get_savings_balance"] = "get_savings_balance"
+
+    source_run_id: str = Field(min_length=1)
+    start_path: Literal["/"] = "/"
+
+    input_type: Literal["MemberLookupInputs"] = "MemberLookupInputs"
+    input_schema: dict[str, Any]
+    output_type: Literal["ReplayResult"] = "ReplayResult"
+    output_schema: dict[str, Any]
+    verifier: Literal["savings_balance_v1"] = "savings_balance_v1"
+
+    steps: list[CapabilityStep] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_contract_schemas(self) -> Self:
+        if self.input_schema != build_input_schema():
+            raise ValueError(
+                "input_schema does not match the supported contract."
+            )
+
+        if self.output_schema != build_output_schema():
+            raise ValueError(
+                "output_schema does not match the supported contract."
+            )
+
+        return self
+
+
+def parse_capability_artifact(data: Any) -> Capability:
+    if not isinstance(data, dict):
+        raise ValueError("Capability artifact must be a JSON object.")
+
+    required_metadata = {"schema_version", "output_type"}
+
+    if not required_metadata.issubset(data):
+        raise ValueError(
+            "Artifact is missing required contract metadata."
+        )
+
+    schema_version = data.get("schema_version")
+
+    if schema_version == "1.1":
+        legacy = _LegacyCapability.model_validate(data)
+
+        return Capability(
+            source_run_id=legacy.source_run_id,
+            start_path=legacy.start_path,
+            input_type=legacy.input_type,
+            input_schema=build_input_schema(),
+            output_type=legacy.output_type,
+            output_schema=build_output_schema(),
+            verifier=legacy.verifier,
+            steps=legacy.steps,
+        )
+
+    if schema_version == CAPABILITY_SCHEMA_VERSION:
+        return Capability.model_validate(data)
+
+    raise ValueError(
+        f"Unsupported capability schema version: {schema_version!r}."
+    )

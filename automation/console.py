@@ -33,6 +33,7 @@ from automation.jobs import (
 from automation.actions import StrictModel
 from automation.evidence import EvidenceEvent
 from demo_app.app import get_dataset_path, list_datasets
+from demo_app.server import DemoServer
 
 
 RUN_DIRECTORY = PROJECT_ROOT / "evidence" / "runs"
@@ -108,6 +109,7 @@ class ConsoleController:
             "capability_id": None,
             "member_id": None,
             "goal": None,
+            "target_url": DemoServer.url,
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -198,6 +200,7 @@ class ConsoleController:
             mode = "discovery"
             inputs = job.task.inputs
             goal = job.task.goal
+            target_url = job.task.target_url
             capability_id = None
             notice_mode = None
             allow_human_takeover = False
@@ -205,6 +208,7 @@ class ConsoleController:
             mode = "replay"
             inputs = job.inputs
             goal = None
+            target_url = DemoServer.url
             capability_id = job.capability_id
             notice_mode = job.notice_mode
             allow_human_takeover = job.allow_human_takeover
@@ -229,6 +233,7 @@ class ConsoleController:
                 capability_id=capability_id,
                 member_id=inputs.member_id,
                 goal=goal,
+                target_url=target_url,
                 notice_mode=notice_mode,
                 allow_human_takeover=allow_human_takeover,
                 result=None,
@@ -368,6 +373,7 @@ def create_console_app(
         return render_template(
             "console.html",
             token=token,
+            target_url=DemoServer.url,
         )
 
     @app.get("/api/datasets")

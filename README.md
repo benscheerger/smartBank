@@ -4,14 +4,14 @@
 
 Some business applications have no integration API, so automation must use their UI. smartBank demonstrates how an LLM can discover a workflow and save it for reuse without further model calls.
 
-The implemented task retrieves a member’s available savings balance and currency from a local banking demo using synthetic records. Discovery produces a validated JSON capability containing reusable actions, input references, and checkpoints. Replay follows those actions with another member ID and checks the displayed result.
+The implemented task retrieves a member’s available savings balance and currency from a local banking demo using synthetic records. Discovery produces a validated JSON capability containing reusable actions, input and output schemas, input references, and checkpoints. Replay follows those actions with another member ID and checks the displayed result.
 
 An operator console provides discovery, replay, dataset selection, results, and run history. When a persistent service notice blocks the supported replay workflow, a human can repair the same browser session and request Resume.
 
 ## Features and scope
 
-- **Discovery:** Accepts a natural-language goal and member ID. The model reads the page and proposes actions within an eight-decision limit.
-- **Reusable capabilities:** Saves verified workflows as versioned JSON files.
+- **Discovery:** Accepts a natural-language goal, an allowlisted target URL, and a member ID. The model reads the page and proposes actions within an eight-decision limit.
+- **Reusable capabilities:** Saves verified workflows as versioned JSON files with self-contained input and output contracts.
 - **Replay:** Runs saved workflows with new inputs without model calls.
 - **Clear outcomes:** Separates success, missing-member results, and handled execution failures.
 - **Recovery and takeover:** Attempts one automatic notice dismissal, then allows human repair when enabled.
@@ -44,6 +44,8 @@ python -m playwright install chromium
 The activation command is for macOS and Linux. Run later commands from the repository root with this environment active.
 
 If `python` selects another installation, use `./.venv/bin/python` instead. Moving or renaming the repository may require recreating the virtual environment.
+
+The included `pyrightconfig.json` points Pyright and VS Code Pylance at this `.venv` and Python 3.11.
 
 ### API configuration
 
@@ -87,8 +89,9 @@ The launcher prints the console URL and attempts to open it in your browser. If 
 1. Select **Discovery**.
 2. Choose the `members` dataset.
 3. Enter member ID `DEMO-101`.
-4. Enter this goal: “Find this member’s available savings balance and report its currency.”
-5. Start the run.
+4. Confirm the local smartBank demo target.
+5. Enter this goal: “Find this member’s available savings balance and report its currency.”
+6. Start the run.
 
 A visible Chromium browser opens. After UI verification succeeds, the console displays the model summary, verified output, run ID, and capability ID.
 
@@ -99,6 +102,8 @@ evidence/capabilities/get_savings_balance_<run-id>.json
 ```
 
 It also updates `get_savings_balance.json`, the convenience alias for the latest successful recording.
+
+New recordings use capability schema `1.2`. Their embedded input and output JSON Schemas are generated from the runtime Pydantic models and validated when loaded. Existing `1.1` artifacts remain supported through an in-memory compatibility upgrade; loading them does not modify their files.
 
 ### Replay with another member
 
@@ -175,9 +180,11 @@ Outputs come from the displayed UI, separately from the model summary. Unexpecte
 
 | Location | Contents |
 | --- | --- |
-| `evidence/capabilities/*.json` | Versioned workflows with reusable inputs, targets, and checkpoints. |
-| `evidence/runs/*.jsonl` | Discovery and replay events, including verification, recovery, and handoff. |
+| `evidence/capabilities/*.json` | Versioned workflows with reusable input/output contracts, recorded controls, and checkpoints. |
+| `evidence/runs/*.jsonl` | Discovery and replay events, including the target URL, verification, recovery, and handoff. |
 | `evidence/runs/*.failure.json` | Failure details and structural capture, or a marker that the snapshot was unavailable. |
+
+New run logs use evidence schema `1.1` and record the allowlisted target URL. Existing `1.0` logs remain supported and are not rewritten.
 
 Action-step events now include fixed purposes such as `enter_member_id` and `open_savings_account`. Verification, recovery, and selected handoff events also include purposes. These describe application-defined intent without storing model-generated reasoning. Older logs may have no purpose field.
 
@@ -189,14 +196,14 @@ Terminal output includes proposed actions and the model summary.
 
 The following runs demonstrate discovery for `DEMO-101`, replay for `DEMO-202`, and persistent-notice recovery through scripted human takeover:
 
-- [Saved capability](evidence/capabilities/get_savings_balance_40ee2080-65d0-453a-bf70-ab07e535c2d4.json)
-- [Live discovery](evidence/runs/40ee2080-65d0-453a-bf70-ab07e535c2d4.jsonl)
-- [Successful replay with another member](evidence/runs/aac7b34f-989c-4a24-aede-9b55a7a15ade.jsonl)
-- [Rejected Resume, manual repair, and successful continuation](evidence/runs/0da49501-d03e-47eb-9f7e-6890fcf53a8f.jsonl)
+- [Saved capability](evidence/capabilities/get_savings_balance_5d9f29de-7bbe-4da0-8f6c-1687f5ee046f.json)
+- [Live discovery](evidence/runs/5d9f29de-7bbe-4da0-8f6c-1687f5ee046f.jsonl)
+- [Successful replay with another member](evidence/runs/853007f3-4aef-466e-9a21-dbb23f6ed971.jsonl)
+- [Rejected Resume, manual repair, and successful continuation](evidence/runs/8c016e6d-02cc-4e83-a146-60ef78038996.jsonl)
 
 The workflow checks passed for verified outputs, capability provenance, event order, and saved purpose labels. Both replay logs reference the discovery run through `source_run_id`.
 
-The default test suite also passed all five modules: policy, failure-evidence privacy, browser interaction and verification, business outcomes, and workflows.
+The default test suite also passed all six modules: capability contracts, policy, failure-evidence privacy, browser interaction and verification, business outcomes, and workflows.
 
 An [earlier missing-member replay](evidence/runs/811880ba-2afa-465b-8f87-c2a25da02b76.jsonl) demonstrates the `member_not_found` business outcome. That run predates purpose logging.
 
@@ -213,7 +220,7 @@ An [earlier missing-member replay](evidence/runs/811880ba-2afa-465b-8f87-c2a25da
 | `automation/actions.py` | Defines action models and strict validation settings. |
 | `automation/executor.py` | Checks policy, locates controls, and performs actions. |
 | `automation/recording.py` | Records actions, replaces member-specific values with input references, and assigns action purposes. |
-| `automation/capability.py` | Defines capability metadata, inputs, templates, actions, and checkpoints. |
+| `automation/capability.py` | Defines capability metadata, embedded contracts, legacy loading, templates, actions, and checkpoints. |
 | `automation/replay.py` | Runs saved actions, checks progress, and handles known outcomes and failures. |
 | `automation/results.py` | Defines replay result formats. |
 | `automation/verification.py` | Checks the account page and reads its displayed values. |
@@ -254,6 +261,7 @@ An [earlier missing-member replay](evidence/runs/811880ba-2afa-465b-8f87-c2a25da
 | `tests/` | Automated checks and failure fixtures. |
 | `evidence/` | Saved capabilities, logs, and failure evidence. |
 | `requirements.txt` | Pinned project dependencies. |
+| `pyrightconfig.json` | Python version and virtual-environment settings for Pyright and Pylance. |
 | `REPORT.md` | Design decisions, tradeoffs, limits, and extension plans. |
 
 ## Testing
@@ -291,13 +299,14 @@ python -m tests.test_workflows --live-discovery
 To replay a specific archived capability, use its filename without `.json`:
 
 ```bash
-python -m tests.test_workflows --capability-id get_savings_balance_40ee2080-65d0-453a-bf70-ab07e535c2d4
+python -m tests.test_workflows --capability-id get_savings_balance_5d9f29de-7bbe-4da0-8f6c-1687f5ee046f
 ```
 
 ### Automated checks
 
 | Test module | Coverage |
 | --- | --- |
+| `tests/test_capabilities.py` | Embedded contracts, target validation, JSON round-tripping, and read-only legacy compatibility. |
 | `tests/test_policy.py` | Configurable permissions, blocked destinations and methods, and risky-button restrictions. |
 | `tests/test_failure_evidence.py` | Structural capture and absence of named sensitive values in a test fixture. |
 | `tests/test_browser.py` | Browser actions, result verification, rejection of the wrong member, and request blocking. |

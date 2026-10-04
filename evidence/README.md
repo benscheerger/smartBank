@@ -1,10 +1,11 @@
 # Execution Evidence
 
-No execution evidence collected yet.
-
-This directory will contain:
-- A capability artifact produced from a real discovery run.
+This directory contains:
+- Capability artifacts produced from real discovery runs.
 - Sanitized discovery and replay logs.
 - Replay results using different input parameters.
-- An error or exceptional-state demonstration.
+- Error and exceptional-state demonstrations.
+- Sanitized structural failure captures.
 - Human takeover and resume evidence.
+
+See the [evidence examples](../README.md#evidence-examples) for the current capability and representative runs.

@@ -4,10 +4,14 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from automation.capability import Capability, MemberLookupInputs
+from automation.capability import (
+    MemberLookupInputs,
+    parse_capability_artifact,
+)
 from automation.evidence import RunLog
 from automation.network import install_request_guard
 from automation.replay import run_replay
+from demo_app.server import DemoServer
 
 
 def main():
@@ -36,21 +40,12 @@ def main():
         artifact_path.read_text(encoding="utf-8")
     )
 
-    required_metadata = {"schema_version", "output_type"}
-
-    if (
-        not isinstance(artifact_data, dict)
-        or not required_metadata.issubset(artifact_data)
-    ):
-        raise ValueError(
-            "Artifact is missing required contract metadata."
-        )
-
-    capability = Capability.model_validate(artifact_data)
+    capability = parse_capability_artifact(artifact_data)
 
     with RunLog(
         directory=project_root / "evidence" / "runs",
         mode="replay",
+        target_url=DemoServer.url,
         source_run_id=capability.source_run_id,
     ) as log:
         print(f"Evidence log: {log.path}")
@@ -78,7 +73,7 @@ def main():
                     capability=capability,
                     inputs=inputs,
                     blocked_requests=blocked_requests,
-                    base_url="http://127.0.0.1:8000/",
+                    base_url=DemoServer.url,
                     log=log,
                     allow_human_takeover=args.human_takeover,
                 )

@@ -23,6 +23,7 @@ from automation.jobs import (
 )
 from automation.verification import BalanceResult
 from demo_app.app import get_dataset_path, load_members
+from demo_app.server import DemoServer
 
 
 class ScriptedOperator(ConsoleTakeover):
@@ -374,6 +375,7 @@ def main() -> None:
                     "Find this member's available savings balance "
                     "and report its currency."
                 ),
+                target_url=DemoServer.url,
                 inputs=MemberLookupInputs(member_id="DEMO-101"),
             ),
             dataset_id=args.dataset,

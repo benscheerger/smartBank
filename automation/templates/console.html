@@ -154,6 +154,13 @@
                 >
 
                 <div id="goal-fields">
+                    <label for="target">Target</label>
+                    <select id="target" required>
+                        <option value="{{ target_url }}">
+                            smartBank demo — {{ target_url }}
+                        </option>
+                    </select>
+
                     <label for="goal">Task</label>
                     <textarea
                         id="goal"
@@ -164,7 +171,7 @@
 
                     <p class="muted">
                         Describe a savings-balance lookup.
-                        The Member ID field selects the target.
+                        The target is limited to the local demo.
                     </p>
                 </div>
 
@@ -238,6 +245,7 @@
 
     const dataset = document.getElementById("dataset");
     const member = document.getElementById("member");
+    const target = document.getElementById("target");
     const goal = document.getElementById("goal");
     const start = document.getElementById("start");
     const history = document.getElementById("history");
@@ -284,6 +292,9 @@
         mode.disabled = busy;
         dataset.disabled = busy;
         member.disabled = busy;
+
+        target.disabled = busy || isReplay;
+        target.required = !isReplay;
 
         goal.disabled = busy || isReplay;
         goal.required = !isReplay;
@@ -408,6 +419,10 @@
 
             if (state.mode === "discovery" && state.goal) {
                 goal.value = state.goal;
+            }
+
+            if (state.mode === "discovery" && state.target_url) {
+                target.value = state.target_url;
             }
 
             if (state.capability_id) {
@@ -609,6 +624,7 @@
                     dataset_id: dataset.value,
                     task: {
                         goal: goal.value,
+                        target_url: target.value,
                         inputs: {
                             member_id: member.value.trim(),
                         },

@@ -9,7 +9,13 @@ from playwright.sync_api import sync_playwright
 from pydantic import Field, field_validator
 
 from automation.actions import StrictModel
-from automation.capability import Capability, MemberLookupInputs
+from automation.capability import (
+    Capability,
+    MemberLookupInputs,
+    build_input_schema,
+    build_output_schema,
+    parse_capability_artifact,
+)
 from automation.discovery import run_discovery
 from automation.evidence import RunLog
 from automation.handoff import TakeoverPanelFactory
@@ -19,7 +25,7 @@ from automation.policy import PolicyViolation, check_url
 from automation.replay import run_replay
 from automation.results import ReplayResult
 from automation.verification import BalanceResult, verify_balance
-from demo_app.server import DemoServer
+from demo_app.server import DemoServer, DemoTargetUrl
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +36,7 @@ CAPABILITY_DIRECTORY = (
 
 class DiscoveryTask(StrictModel):
     goal: str = Field(min_length=1, max_length=1000)
+    target_url: DemoTargetUrl
     inputs: MemberLookupInputs
 
     @field_validator("goal")
@@ -106,17 +113,7 @@ def load_saved_capability(capability_id: str) -> Capability:
         path.read_text(encoding="utf-8")
     )
 
-    required_metadata = {"schema_version", "output_type"}
-
-    if (
-        not isinstance(artifact_data, dict)
-        or not required_metadata.issubset(artifact_data)
-    ):
-        raise ValueError(
-            "Artifact is missing required contract metadata."
-        )
-
-    return Capability.model_validate(artifact_data)
+    return parse_capability_artifact(artifact_data)
 
 
 def discover_capability(
@@ -145,12 +142,14 @@ def discover_capability(
     with RunLog(
         directory=PROJECT_ROOT / "evidence" / "runs",
         mode="discovery",
+        target_url=task.target_url,
         dataset_id=dataset_id,
     ) as log:
         if on_run_started is not None:
             on_run_started(log.run_id)
 
         print(f"Evidence log: {log.path}")
+        print(f"Target: {task.target_url}")
         print(f"Dataset: {dataset_id}")
         print(f"Model: {MODEL}")
 
@@ -178,8 +177,8 @@ def discover_capability(
                         page = context.new_page()
                         page.set_default_timeout(5000)
 
-                        check_url(demo.url)
-                        page.goto(demo.url)
+                        check_url(task.target_url)
+                        page.goto(task.target_url)
 
                         discovery = run_discovery(
                             client=client,
@@ -212,6 +211,8 @@ def discover_capability(
 
                         capability = Capability(
                             source_run_id=discovery.run_id,
+                            input_schema=build_input_schema(),
+                            output_schema=build_output_schema(),
                             steps=discovery.steps,
                         )
 
@@ -288,6 +289,7 @@ def replay_capability(
     with RunLog(
         directory=PROJECT_ROOT / "evidence" / "runs",
         mode="replay",
+        target_url=DemoServer.url,
         source_run_id=capability.source_run_id,
         dataset_id=dataset_id,
     ) as log:
@@ -296,6 +298,7 @@ def replay_capability(
 
         print(f"Evidence log: {log.path}")
         print(f"Replaying: {capability.name}")
+        print(f"Target: {DemoServer.url}")
         print(f"Dataset: {dataset_id}")
         print(f"Member: {inputs.member_id}")
 

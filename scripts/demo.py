@@ -6,6 +6,7 @@ from automation.jobs import (
     discover_capability,
     replay_capability,
 )
+from demo_app.server import DemoServer
 
 
 def main() -> None:
@@ -14,6 +15,7 @@ def main() -> None:
             "Find this member's available savings balance "
             "and report its currency."
         ),
+        target_url=DemoServer.url,
         inputs=MemberLookupInputs(member_id="DEMO-101"),
     )
 

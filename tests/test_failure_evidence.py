@@ -9,6 +9,7 @@ from automation.evidence import (
     RunLog,
 )
 from automation.results import ReplayFailure
+from demo_app.server import DemoServer
 
 
 def main():
@@ -46,6 +47,7 @@ def main():
                 with RunLog(
                     directory=Path(temporary_directory),
                     mode="replay",
+                    target_url=DemoServer.url,
                 ) as log:
                     path = save_failure_evidence(page, log, failure)
                     text = path.read_text(encoding="utf-8")

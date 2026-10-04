@@ -1,11 +1,11 @@
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, TextIO, get_args
+from typing import Literal, Self, TextIO, get_args
 from uuid import uuid4
 
 from playwright.sync_api import Error as PlaywrightError, Page
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, model_validator
 
 from automation.actions import StrictModel
 from automation.results import ReplayFailure
@@ -77,7 +77,7 @@ class HumanAction(StrictModel):
 
 
 class EvidenceEvent(StrictModel):
-    schema_version: Literal["1.0"]
+    schema_version: Literal["1.0", "1.1"]
     timestamp: str
     elapsed_ms: int
     run_id: str
@@ -90,6 +90,17 @@ class EvidenceEvent(StrictModel):
     human_action: HumanAction | None = None
     dataset_id: str | None = None
     purpose: ActionPurpose | None = None
+    target_url: str | None = None
+
+    @model_validator(mode="after")
+    def validate_target_metadata(self) -> Self:
+        if self.schema_version == "1.0" and self.target_url is not None:
+            raise ValueError("Evidence schema 1.0 cannot include target_url.")
+
+        if self.schema_version == "1.1" and self.target_url is None:
+            raise ValueError("Evidence schema 1.1 requires target_url.")
+
+        return self
 
 
 class RunLog:
@@ -97,12 +108,14 @@ class RunLog:
         self,
         directory: Path,
         mode: Literal["discovery", "replay"],
+        target_url: str,
         source_run_id: str | None = None,
         dataset_id: str | None = None,
     ):
         self.run_id = str(uuid4())
         self.path = directory / f"{self.run_id}.jsonl"
         self.mode: Literal["discovery", "replay"] = mode
+        self.target_url = target_url
         self.source_run_id = source_run_id
         self.dataset_id: str | None = dataset_id
 
@@ -139,7 +152,7 @@ class RunLog:
             raise RuntimeError("The evidence log is not open.")
 
         entry = EvidenceEvent(
-            schema_version="1.0",
+            schema_version="1.1",
             timestamp=datetime.now(timezone.utc).isoformat(),
             elapsed_ms=int(
                 (time.monotonic() - self._started_at) * 1000
@@ -154,6 +167,7 @@ class RunLog:
             human_action=human_action,
             dataset_id=self.dataset_id,
             purpose=purpose,
+            target_url=self.target_url,
         )
 
         self._file.write(entry.model_dump_json() + "\n")
