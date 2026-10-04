@@ -327,6 +327,7 @@ python -m tests.test_workflows --capability-id get_savings_balance_a38e407f-9c75
 | `tests/test_business_outcomes.py` | Existing-member and missing-member detection. |
 | `tests/test_workflows.py` | Optional live discovery, replay, provenance, event order, saved purposes, older-event compatibility, and validated takeover. |
 | `tests/test_error_contracts.py` | End-to-end replay outcomes, recovery events, discovery escalation, structural failure capture, model metadata, and WebSocket blocking. |
+| `tests/test_terminal_privacy.py` | Safe terminal formatting and absence of sensitive values in replay, discovery, and job-failure output. |
 
 The takeover tests use scripted operator controls to request Resume before repair, click the real manual-resolution button, and request Resume again. They also cover cancellation, timeout, rejected discovery Resume, and bounded discovery continuation. They exercise production handoff validation and manual-action recording, but do not drive the console through a browser.
 

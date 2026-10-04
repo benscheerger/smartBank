@@ -4,20 +4,20 @@
 
 smartBank retrieves a member’s available savings balance and currency from a local banking demo using synthetic records.
 
-Discovery follows an observe → decide → act loop. Playwright reads the page, the model proposes a typed action, and application code checks policy before executing it. Discovery starts with an eight-decision window. When explicitly enabled, one validated human handoff can grant one additional eight-decision window. Separate UI verification must succeed before the recorded workflow becomes a reusable capability.
+Discovery follows an observe → decide → act loop. Playwright reads the page, the model proposes one typed action, and code checks policy before execution. Discovery starts with an eight-decision window. One validated human handoff can grant one additional window. Separate UI verification must succeed before the workflow becomes reusable.
 
-The discovery request includes an explicit target URL. The implementation accepts only the allowlisted local smartBank demo URL and uses that value for policy validation and initial navigation; it does not accept arbitrary web targets.
-
-Replay follows the saved workflow without model calls. The Flask operator console uses shared discovery and replay functions. HTTP handlers queue commands; the thread controlling the browser performs Playwright operations.
+The request includes a target URL, but only the allowlisted local demo is accepted. Replay follows the saved workflow without model calls. The Flask console queues commands for the browser-control thread.
 
 | Decision | Reason | Tradeoff |
 | --- | --- | --- |
-| Python and Flask | Familiar tools keep the demo and console straightforward. | Active jobs cannot be recovered after a process restart. |
-| Playwright and accessibility snapshots | Labels and roles help the model understand pages and identify controls. | Useful labels and compatible page structure are required. |
-| Structured model responses | Pydantic validates proposed actions before execution. | Discovery is limited to supported action types. |
-| Separate planning and execution | Application code controls permissions and browser operations. | Supporting another action requires an explicit implementation. |
-| Discovery followed by replay | Recorded workflows avoid repeated model decisions. | Replay still needs checks for unexpected application behavior. |
-| Synthetic demo | Known records and injected notices make testing reproducible. | Results provide limited evidence of use on unfamiliar applications. |
+| Python and Flask | Familiar tools keep the demo and console straightforward. | Active jobs are not recovered after a restart. |
+| Playwright and accessibility snapshots | Labels and roles provide useful control descriptions. | Compatible labels and page structure are required. |
+| Structured model responses | Pydantic validates each proposed action. | Discovery is limited to supported action types. |
+| Separate planning and execution | Application code controls permissions and browser operations. | New actions need explicit support. |
+| Discovery followed by replay | Saved workflows avoid repeated model decisions. | Replay still needs runtime checks. |
+| Synthetic demo | Known records and notices make tests reproducible. | It gives limited evidence for unfamiliar applications. |
+
+OpenAI was chosen because its Responses API returns the strict Pydantic `NextAction` type. The tested `gpt-6-luna` completed bounded discovery; replay does not use it. The prompt sends the goal and structural observation, treats page content as data, and permits only supported actions. Policy, execution, recording, and verification stay in code. Another provider can replace `propose_action` by returning the same `NextAction` and `ModelCallMetadata` contracts.
 
 ## Artifact schema
 
@@ -25,88 +25,68 @@ The capability stores the reusable workflow rather than the model conversation.
 
 | Field | Purpose |
 | --- | --- |
-| `schema_version` | Format version. New recordings use `1.3`; the loader upgrades valid `1.1` and `1.2` artifacts in memory. |
-| `name` | Supported task: `get_savings_balance`. |
-| `source_run_id` | Discovery run that created it. |
-| `start_path` | Entry path, currently `/`. |
-| `input_type` | Names `MemberLookupInputs`, which validates the member ID. |
-| `input_schema` | Embeds the complete JSON Schema for replay inputs. |
-| `output_type` | Names `ReplayResult`, covering success, a business outcome, or failure. |
-| `output_schema` | Embeds the serialization JSON Schema for all replay result variants. |
-| `verifier` | Names the task-specific result check, `savings_balance_v1`. |
-| `steps` | Ordered actions and expected page paths. |
+| `schema_version` | Version of the serialized format. New recordings use `1.3`. |
+| `name`, `source_run_id` | Supported task and discovery provenance. |
+| `start_path`, `steps` | Entry path, ordered actions, and expected paths. |
+| `input_type`, `input_schema` | Typed replay inputs and their complete JSON Schema. |
+| `output_type`, `output_schema` | Success, business outcome, and failure contracts. |
+| `verifier` | Task-specific final result check. |
 
-The embedded schemas are generated from the Pydantic models. They include the required member-ID pattern, the three discriminated result variants, required recovery events, and the serialized string form of a balance. Version `1.3` loading checks both schemas against the current contracts. Version `1.2` loading checks a literal frozen input schema and frozen legacy output models, independently of current input-model changes. Existing run-specific `1.1` and `1.2` artifacts remain unchanged on disk and are upgraded only in memory.
+The embedded schemas come from the Pydantic models. Strict loading rejects extra fields, invalid values, changed contracts, and unsupported versions. Older valid artifacts are upgraded in memory and are not rewritten; the README gives the version details.
 
-Fields are targeted by label, buttons by name, and replayed links by exact destination. Playwright rejects ambiguous targets instead of selecting an arbitrary match.
-
-Templates combine fixed text with input references. A member link contains `/members/` plus `member_id`, allowing reuse without storing the original member’s name. These targets are easier to review than coordinates but depend on compatible labels and routes.
-
-Strict schemas reject unexpected fields, invalid constrained values, altered embedded contracts, and explicitly unsupported versions.
+Fields are targeted by label, buttons by name, and links by exact destination. Playwright rejects ambiguous targets. Templates combine fixed text with input references, so a member link can reuse `member_id` without storing the original member’s name. These targets are easier to review than coordinates but still depend on compatible labels and routes.
 
 ## Determinism & error handling
 
-Replay resolves validated inputs into recorded actions. It does not ask the model to select actions or repair failures. The action order stays fixed, although displayed application data can change.
+Replay resolves validated inputs into recorded actions. It does not ask the model to choose actions or repair failures. The action order stays fixed, although displayed data can change.
 
-Playwright waits for actionable controls within configured timeouts. Path checkpoints check progress. Final verification confirms the requested member and account, reads a finite numeric balance, and checks for three uppercase currency letters. This verifies displayed UI evidence separately from the model’s claim; it does not confirm the balance against an independent banking record.
+Playwright waits for actionable controls and checks the expected path after each step. Final verification confirms the member and account, reads a finite balance, and requires a three-letter uppercase currency. This checks the UI separately from the model’s claim; it does not compare against an independent bank record.
 
 | Condition | Response |
 | --- | --- |
 | Missing member | Return `business_outcome` with `member_not_found`. |
-| Known blocking notice | Attempt automatic dismissal once per run. |
-| Persistent notice at the supported checkpoint | Request human takeover when enabled. |
-| Missing target, checkpoint mismatch, policy violation, or failed verification | Stop and return a structured failure. |
+| Known blocking notice | Attempt automatic dismissal once. |
+| Persistent supported notice | Request human takeover when enabled. |
+| Missing target, wrong checkpoint, policy violation, or failed verification | Stop with a structured failure. |
 
-All three replay result variants contain `recovery_events`. A clean run returns an empty list. Notice handling records automatic recovery, recovery by a human, exhaustion, cancellation, or timeout. Failures use specific `recovery_exhausted`, `human_takeover_cancelled`, and `human_takeover_timed_out` codes rather than collapsing those conditions into verification failures.
+Every replay result includes `recovery_events`. Notice handling records automatic recovery, human recovery, exhaustion, cancellation, or timeout. Specific codes keep those conditions separate from verification failures.
 
-Handled UI failures remain in the capability's `ReplayResult`. The outer replay job uses a separate discriminated envelope: `replay_result` carries that capability result, while `job_failure` reports capability loading, evidence, environment, or unexpected orchestration errors with a safe stage and exception type. This keeps capability schema `1.3` stable. Failures after logging starts retain a run ID and terminal `run_failed` event; pre-log failures have no run ID.
+Handled UI failures stay inside the capability’s `ReplayResult`. A separate replay-job envelope returns either that result or a `job_failure` for loading, evidence, environment, or unexpected orchestration errors. Failures after logging starts keep the run ID and end with `run_failed`; earlier failures have no run ID. This leaves capability schema `1.3` unchanged.
 
-Saved events record the target URL, execution, verification, recovery, and handoff. New logs use evidence schema `1.2`; archived `1.0` and `1.1` logs remain readable without modification. Discovery action proposals record provider, returned model name, response ID, and nullable token counts without model content. Action events include fixed purpose labels, such as `open_member_details`, to explain their intent without storing member details or model-generated reasoning. Replay failures and discovery failures with an available page attempt to capture a bounded structural snapshot and record when capture or writing is unavailable. New failure captures use schema `1.1`; archived `1.0` captures remain readable.
+Evidence records the target, actions, verification, recovery, handoff, and safe model-call metadata. It omits prompts, observations, response content, entered values, and reasoning. Failures attempt a bounded structural capture and record when it is unavailable.
 
 ## Heterogeneity & multi-tenant
 
-The implementation supports one web application. Alternate datasets demonstrate reuse across records, not different vendor interfaces.
+The implementation supports one web application. Datasets show record reuse, not vendor reuse. The artifact and executor are web-specific.
 
-The current artifact and executor are web-specific: they encode HTML labels, link destinations, URL paths, and a Playwright page. The adapter design below is an extension plan, not an implemented cross-surface abstraction.
+The proposed seam keeps logical steps in the artifact and moves surface work into an adapter. Each adapter would observe, resolve targets, act, check checkpoints, and read values. Modern web, legacy web, and desktop adapters could use labels, frames, accessibility controls, image matching, or OCR without changing the logical flow.
 
-I would introduce surface adapters responsible for observation, actions, and reading verification values. A web adapter could handle labels, links, frames, and application-specific selectors. A desktop adapter could use operating-system accessibility controls, with image matching or OCR where needed.
+Four versions would stay separate: artifact schema, workflow, adapter, and supported vendor application. Older artifacts without adapter metadata would migrate in memory to the smartBank web profile and stay unchanged on disk. A registry would select an adapter from the artifact and tenant settings. The surface kind, application family, and adapter major version must match; the newest compatible minor version would be used. No match would stop execution.
 
-The recorded workflow would reference logical targets such as “member search field.” Each adapter would map those targets to actual controls. Unreliable or ambiguous mappings would stop execution.
+Configuration would resolve in this order: shared vendor artifact, vendor-version control mapping, then tenant override. An override could change the entry URL, logical control mappings, or make policy narrower. It could not change inputs, outputs, step order, verification, or broaden permissions.
 
-Institutions using compatible versions of the same vendor application could share a workflow. Separate tenant settings would contain entry URLs, policies, and control mappings. Artifact metadata would identify supported application and adapter versions.
-
-Compatibility checks would run before reuse. Tenant overrides would be explicit and tested. Changed screen sequences could require a separate workflow version rather than silently changing an existing capability.
+A preflight check would compare the vendor version, entry route, adapter version, and a small application signature made from required controls. Every logical target must resolve once. Replay would continue checking recorded checkpoints and stop on the first missing or ambiguous mapping. A control-only difference needs a mapping override. A changed screen sequence needs a new workflow version. A serialization-only change uses an artifact migration.
 
 ## Escalation & handoff
 
-Human takeover handles a persistent service notice at the member-details checkpoint after automatic recovery is exhausted. Discovery can request one handoff after the initial eight-step budget or an actionable target timeout. Policy violations, model or parsing failures, and lost browser sessions do not trigger takeover.
+Human takeover handles a persistent service notice after automatic recovery is exhausted. Discovery can also request one handoff after its decision budget or an actionable-target timeout. Policy violations, model failures, and lost browser sessions stop instead.
 
-Replay and discovery pause on the original browser page and context. The console and CLI panel provide the task or capability, mode, reason, member, step, owner, timeout, and Resume and Cancel controls. Takeover states distinguish human control, Resume validation, and return to automation.
+Automation pauses on the original browser page and context. The console shows the task, mode, reason, step, owner, timeout, and Resume and Cancel controls. Resume checks the same single-tab session, policy, member page, notice state, and pending control. Discovery also checks that the member input and workflow have not changed. A failed but repairable check leaves automation paused; an unsafe session stops the run.
 
-Replay Resume checks the original single-tab session, policy, the requested member-details page, removal of the notice, and one actionable pending link. A repairable replay checkpoint failure leaves automation paused. Discovery Resume requires the same URL, unchanged member input, one open page, no blocked traffic, and only known notice-repair controls; a workflow-changing action or other invalid session stops discovery. A validated discovery Resume grants one additional eight-step window with continuous numbering. Human actions are never added to the capability.
-
-One takeover is allowed per run, with a default 180-second timeout. Cancellation or expiry produces a structured failure. Evidence records control transfers, rejected Resume requests, and up to 100 categorized manual actions without entered values.
-
-End-to-end tests exercise clean replay, automatic recovery, the missing-member outcome, exhausted recovery, successful takeover, cancellation, timeout, checkpoint mismatch, discovery continuation, rejected discovery Resume, failure capture, model metadata, and WebSocket blocking.
+One takeover is allowed per run, with a 180-second timeout. Evidence records control transfers, rejected Resume requests, and categorized manual actions without values. Human actions are not saved in the capability.
 
 ## Safety
 
-A configurable policy restricts origins, paths, HTTP methods, action types, fields, and buttons. Each job adds a request scope that permits only the exact member search, requested member details, and requested member’s savings account; custom policy files cannot broaden that scope. Entered member IDs and link destinations are checked before execution. A browser request guard blocks disallowed intercepted requests and HTTP redirects, closes all WebSockets before they connect, and records each block through the existing policy-violation channel; job functions disable service workers.
+A configurable policy restricts origins, paths, methods, actions, fields, and buttons. Each job narrows it to the requested member and savings account; custom policy files cannot widen it. IDs and destinations are checked before execution.
 
-The implemented banking task only reads account information. Configured risky button names take precedence over permitted button names. The policy test checks this behavior with a button named Transfer.
+A browser guard blocks disallowed requests, redirects, and WebSockets, and job functions disable service workers. Risky button names override permitted names. The demonstrated task only reads account information. Model-provided code is never executed. Human takeover keeps the request guard, and Resume cannot override a policy violation.
 
-Model-provided code is not executed. Human takeover retains the request guard, and Resume cannot override a policy violation.
+Logs omit prompts, raw observations, response content, summaries, entered values, and verified banking data. Failure captures keep limited structure and control counts without page text, field values, or raw attributes. Terminal output uses redacted identifiers and fixed status fields. Caller-facing results and the authenticated local console still return the verified task output.
 
-Saved JSONL logs omit prompts, raw observations, model response content, summaries, and entered values. Failure capture retains limited DOM structure and control counts without page text, field values, or raw attributes. Privacy tests check that named sensitive sentinel values are absent from replay and discovery failure fixtures. Terminal diagnostics contain only safe run metadata, redacted identifiers, and fixed action, purpose, status, recovery, and failure fields. Caller-facing results retain the verified banking output and model summary where intended; terminal diagnostics do not emit raw model, page, input, or verified banking content.
-
-Discovery supports loading the API key from outside the repository. Console requests use token, Host, and POST Origin checks, but there is no user-login system.
-
-These controls are not an operating-system sandbox. Discovery sends synthetic page observations to the model; sanitizing saved evidence does not protect information sent in model requests.
+The API key loads from outside the repository. Console requests use token, Host, and POST Origin checks, but there is no user-login system. These controls are not an operating-system sandbox. Discovery still sends synthetic page observations to the model.
 
 ## Cuts
 
 I focused on one complete workflow so discovery, recording, replay, verification, recovery, and takeover could be tested together.
 
-I left out additional tasks, desktop execution, tenant-specific workflows, escalation beyond the one supported discovery handoff, session-expiry recovery, remote co-browsing, user accounts, and job recovery after a restart. Changed routes or controls are not repaired automatically.
-
-Next, I would add more tasks to the existing banking UI and support more safe escalation cases. After that, I would introduce a surface adapter and test a second UI variant.
+I left out other tasks, desktop execution, tenant-specific workflows, broader escalation, session-expiry recovery, remote co-browsing, user accounts, and restart recovery. Next I would add tasks and safe recovery cases, then implement the adapter seam against a second UI variant.
